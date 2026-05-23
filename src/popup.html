@@ -209,6 +209,34 @@
     </section>
   </template>
 
+  <template id="tpl-success">
+    <section class="success glass" data-success>
+      <div class="success-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M8 12.5l2.5 2.5L16 9.5"></path>
+        </svg>
+      </div>
+      <h2 class="success-title">Issue filed</h2>
+      <p class="success-sub" data-field="success-sub"></p>
+      <div class="success-actions">
+        <a class="btn primary" target="_blank" rel="noopener noreferrer" data-field="success-link">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path>
+            <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"></path>
+          </svg>
+          <span>Open issue</span>
+        </a>
+        <button class="btn ghost" type="button" data-action="file-another">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 5v14"></path><path d="M5 12h14"></path>
+          </svg>
+          <span>File another</span>
+        </button>
+      </div>
+    </section>
+  </template>
+
   <script type="module" src="popup.js"></script>
 </body>
 </html>

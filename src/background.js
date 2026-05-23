@@ -1,15 +1,20 @@
 // Quote to Issue — MV3 service worker
 //
-// Responsibilities (scaffolding only — features land in subsequent roadmap items):
+// Responsibilities:
 //   * Lifecycle: install/update bookkeeping in chrome.storage.local.
+//   * Context menu: "File as GitHub issue" on selection.
+//   * GitHub Issues API submission (uses the stored encrypted PAT).
 //   * Message router: dispatch typed messages from popup/content scripts.
-//   * Action click: opens the popup (declared in manifest.action).
 //
 // Keep this file side-effect free at module top-level beyond listener
 // registration — MV3 service workers can be terminated and resurrected
 // at any time. All state must live in chrome.storage.
 
+import { getToken } from "./token.js";
+
 const LOG_PREFIX = "[quote-to-issue]";
+const GITHUB_API = "https://api.github.com";
+const REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/;
 const STORAGE_KEYS = Object.freeze({
   installedAt: "qti.installedAt",
   lastVersion: "qti.lastVersion",
@@ -46,6 +51,53 @@ on("getPendingQuote", async () => {
 on("clearPendingQuote", async () => {
   await chrome.storage.local.remove(STORAGE_KEYS.pendingQuote);
   return { cleared: true };
+});
+
+// submitIssue — POST a GitHub issue using the stored PAT.
+// payload: { repo: "owner/name", title, body, labels?: string[] }
+on("submitIssue", async (msg) => {
+  const repo = String(msg?.repo || "").trim();
+  const title = String(msg?.title || "").trim();
+  const body = String(msg?.body || "");
+  const labels = Array.isArray(msg?.labels)
+    ? msg.labels.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
+    : [];
+  if (!REPO_RE.test(repo)) throw new Error("Invalid repo (use owner/name)");
+  if (!title) throw new Error("Issue title is required");
+  const token = await getToken();
+  if (!token) throw new Error("No GitHub token saved — open settings to add one.");
+  const res = await fetch(`${GITHUB_API}/repos/${repo}/issues`, {
+    method: "POST",
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ title, body, labels }),
+  });
+  let data = null;
+  try { data = await res.json(); } catch { /* may be empty */ }
+  if (!res.ok) {
+    const msgs = [];
+    if (data?.message) msgs.push(data.message);
+    if (Array.isArray(data?.errors)) {
+      for (const e of data.errors) {
+        if (e?.message) msgs.push(e.message);
+        else if (e?.field && e?.code) msgs.push(`${e.field}: ${e.code}`);
+      }
+    }
+    const detail = msgs.length ? msgs.join(" — ") : `${res.status} ${res.statusText}`;
+    const err = new Error(`GitHub: ${detail}`);
+    err.status = res.status;
+    throw err;
+  }
+  return {
+    number: data?.number ?? null,
+    htmlUrl: data?.html_url ?? null,
+    nodeId: data?.node_id ?? null,
+    repo,
+  };
 });
 
 // ---------------------------------------------------------------------------

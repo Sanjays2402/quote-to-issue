@@ -30,6 +30,10 @@ for (const needle of [
   "nearestHeading",
   "pageUrl",
   "capturedAt",
+  "submitIssue",
+  "api.github.com",
+  "X-GitHub-Api-Version",
+  "Bearer ",
 ]) {
   if (!sw.includes(needle)) {
     console.error("background.js missing scaffolding token:", needle);
@@ -47,6 +51,8 @@ for (const needle of [
   'data-action="toggle-preview"',
   'data-action="submit"',
   "Body preview",
+  "tpl-success",
+  'data-field="success-link"',
 ]) {
   if (!popupHtml.includes(needle)) { console.error("popup.html missing token:", needle); process.exit(1); }
 }

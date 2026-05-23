@@ -20,6 +20,7 @@ const tplEmpty = document.getElementById("tpl-empty");
 const tplQuote = document.getElementById("tpl-quote");
 const tplForm = document.getElementById("tpl-form");
 const tplSettings = document.getElementById("tpl-settings");
+const tplSuccess = document.getElementById("tpl-success");
 
 let settingsOpen = false;
 
@@ -225,16 +226,76 @@ function buildFormNode(q, state) {
     if (!shown) previewBody.textContent = buildMarkdownBody(q);
   });
 
-  submitBtn.title = "Token-based submission lands in a later roadmap item";
+  submitBtn.title = "Create a GitHub issue with the captured quote";
 
-  // Reflect token presence on submit hint so the form doesn't lie.
+  let submitting = false;
+  const errorEl = document.createElement("p");
+  errorEl.className = "field-hint error submit-error";
+  errorEl.hidden = true;
+  submitBtn.parentElement?.parentElement?.insertBefore(errorEl, submitBtn.parentElement);
+
+  async function doSubmit() {
+    if (submitting) return;
+    const repo = parseRepo(repoInput.value);
+    const title = titleInput.value.trim();
+    if (!repo.ok || !title) {
+      validateRepo();
+      if (!title) titleInput.focus();
+      return;
+    }
+    if (!(await hasToken())) {
+      errorEl.hidden = false;
+      errorEl.textContent = "Add a GitHub token in settings first.";
+      return;
+    }
+    submitting = true;
+    submitBtn.disabled = true;
+    submitBtn.classList.add("loading");
+    errorEl.hidden = true;
+    try {
+      const reply = await chrome.runtime.sendMessage({
+        type: "submitIssue",
+        repo: repo.value,
+        title,
+        body: buildMarkdownBody(q),
+        labels: parseLabels(labelsInput.value),
+      });
+      if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
+      const created = reply.result || {};
+      await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);
+      await saveFormState({ title: "" });
+      renderSuccess({ repo: repo.value, ...created });
+    } catch (err) {
+      errorEl.hidden = false;
+      errorEl.textContent = String(err?.message || err);
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("loading");
+    } finally {
+      submitting = false;
+    }
+  }
+
+  submitBtn.addEventListener("click", doSubmit);
+
+  // Reflect token presence on submit hint and enable submission when ready.
   hasToken().then((has) => {
     const hint = node.querySelector('[data-field="submit-hint"]');
-    if (!hint) return;
-    hint.textContent = has
-      ? "Token configured. Submission lands in the next item."
-      : "Add a GitHub token in settings to enable submission.";
+    if (hint) {
+      hint.textContent = has
+        ? "Ready to file. Submission posts to the GitHub Issues API."
+        : "Add a GitHub token in settings to enable submission.";
+    }
+    const repoOk = parseRepo(repoInput.value).ok;
+    submitBtn.disabled = !(has && repoOk && titleInput.value.trim());
   }).catch(() => {});
+
+  const refreshSubmitState = async () => {
+    const has = await hasToken().catch(() => false);
+    const repoOk = parseRepo(repoInput.value).ok;
+    submitBtn.disabled = !(has && repoOk && titleInput.value.trim());
+  };
+  repoInput.addEventListener("input", refreshSubmitState);
+  titleInput.addEventListener("input", refreshSubmitState);
 
   return node;
 }
@@ -353,6 +414,24 @@ async function renderSettings() {
   await refreshStatus();
   root.replaceChildren(panel);
   tokenInput.focus?.();
+}
+
+function renderSuccess(info) {
+  if (!tplSuccess) return;
+  const node = tplSuccess.content.cloneNode(true);
+  const sub = node.querySelector('[data-field="success-sub"]');
+  const link = node.querySelector('[data-field="success-link"]');
+  const repo = info?.repo || "";
+  const num = info?.number;
+  sub.textContent = num != null && repo
+    ? `${repo} #${num} created on GitHub.`
+    : `Issue created${repo ? " on " + repo : ""}.`;
+  if (info?.htmlUrl) link.href = info.htmlUrl;
+  else { link.removeAttribute("href"); link.classList.add("disabled"); }
+  node.querySelector('[data-action="file-another"]').addEventListener("click", () => {
+    loadPending();
+  });
+  root.replaceChildren(node);
 }
 
 function renderQuote(q) {
