@@ -18,7 +18,40 @@ const STORAGE_KEYS = Object.freeze({
   drafts: "qti.drafts",
   bulkQuotes: "qti.bulkQuotes",
   bulkState: "qti.bulkState",
+  captureSettings: "qti.captureSettings",
 });
+
+// ---------------------------------------------------------------------------
+// Capture settings — toggle + radius for surrounding-context scraping
+// ---------------------------------------------------------------------------
+const CONTEXT_RADIUS_MIN = 0;
+const CONTEXT_RADIUS_MAX = 600;
+const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240 });
+
+function normalizeCaptureSettings(raw) {
+  const out = { ...DEFAULT_CAPTURE_SETTINGS };
+  if (!raw || typeof raw !== "object") return out;
+  if (typeof raw.contextEnabled === "boolean") out.contextEnabled = raw.contextEnabled;
+  const r = Number(raw.contextRadius);
+  if (Number.isFinite(r)) {
+    out.contextRadius = Math.max(CONTEXT_RADIUS_MIN, Math.min(CONTEXT_RADIUS_MAX, Math.round(r)));
+  }
+  if (!out.contextEnabled) out.contextRadius = 0;
+  return out;
+}
+
+async function getCaptureSettings() {
+  if (!chrome?.storage?.local) return { ...DEFAULT_CAPTURE_SETTINGS };
+  const out = await chrome.storage.local.get(STORAGE_KEYS.captureSettings);
+  return normalizeCaptureSettings(out[STORAGE_KEYS.captureSettings]);
+}
+
+async function setCaptureSettings(patch) {
+  const cur = await getCaptureSettings();
+  const next = normalizeCaptureSettings({ ...cur, ...patch });
+  await chrome.storage.local.set({ [STORAGE_KEYS.captureSettings]: next });
+  return next;
+}
 
 const MAX_BULK_QUOTES = 20;
 
@@ -782,6 +815,8 @@ if (typeof globalThis !== "undefined") {
     normalizeDrafts, MAX_DRAFTS,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
     renderMarkdownPreview, escapeHtml,
+    normalizeCaptureSettings, DEFAULT_CAPTURE_SETTINGS,
+    CONTEXT_RADIUS_MIN, CONTEXT_RADIUS_MAX,
   };
 }
 
@@ -1477,6 +1512,11 @@ async function renderSettings() {
   const clearBtn = node.querySelector('[data-action="clear-token"]');
   const revealBtn = node.querySelector('[data-action="reveal-token"]');
   const closeBtn = node.querySelector('[data-action="close-settings"]');
+  const contextToggleBtn = node.querySelector('[data-action="toggle-context"]');
+  const contextToggleLabel = node.querySelector('[data-field="context-toggle-label"]');
+  const contextRangeBox = node.querySelector('[data-context-range]');
+  const contextRangeInput = node.querySelector('[data-field="context-radius"]');
+  const contextRangeValue = node.querySelector('[data-field="context-radius-value"]');
 
   async function refreshStatus() {
     const info = await getTokenInfo().catch(() => null);
@@ -1559,6 +1599,36 @@ async function renderSettings() {
   });
 
   await refreshStatus();
+
+  // Capture-radius wiring — persisted in chrome.storage.local so the
+  // service worker can read it for every selection capture.
+  if (contextToggleBtn && contextRangeInput) {
+    const initial = await getCaptureSettings();
+    const applyUi = (s) => {
+      const enabled = !!s.contextEnabled;
+      contextToggleBtn.setAttribute("aria-pressed", String(enabled));
+      if (contextToggleLabel) contextToggleLabel.textContent = enabled ? "On" : "Off";
+      if (contextRangeBox) contextRangeBox.dataset.disabled = String(!enabled);
+      contextRangeInput.disabled = !enabled;
+      contextRangeInput.value = String(enabled ? (s.contextRadius || 0) : 0);
+      if (contextRangeValue) contextRangeValue.textContent = String(enabled ? (s.contextRadius || 0) : 0);
+    };
+    applyUi(initial);
+    contextToggleBtn.addEventListener("click", async () => {
+      const enabled = contextToggleBtn.getAttribute("aria-pressed") !== "true";
+      const radius = enabled ? Math.max(20, Number(contextRangeInput.value) || 240) : 0;
+      const next = await setCaptureSettings({ contextEnabled: enabled, contextRadius: radius });
+      applyUi(next);
+    });
+    contextRangeInput.addEventListener("input", () => {
+      if (contextRangeValue) contextRangeValue.textContent = String(contextRangeInput.value);
+    });
+    contextRangeInput.addEventListener("change", async () => {
+      const next = await setCaptureSettings({ contextRadius: Number(contextRangeInput.value) || 0, contextEnabled: contextToggleBtn.getAttribute("aria-pressed") === "true" });
+      applyUi(next);
+    });
+  }
+
   root.replaceChildren(panel);
   tokenInput.focus?.();
 }

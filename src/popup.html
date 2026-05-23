@@ -363,6 +363,39 @@
         <p class="field-hint" data-field="token-hint">Token never leaves this machine.</p>
       </div>
 
+      <div class="settings-divider" role="separator" aria-hidden="true"></div>
+
+      <div class="capture-block" data-capture-block>
+        <div class="capture-head">
+          <div class="quote-meta">
+            <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h16"></path><path d="M4 12h10"></path><path d="M4 17h7"></path>
+              <path d="M16 14l4 3-4 3"></path>
+            </svg>
+            <span class="meta-label">Surrounding context</span>
+          </div>
+          <button class="chip-toggle" type="button" data-action="toggle-context" aria-pressed="true" title="Capture text around the selection">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="7" width="18" height="10" rx="5"></rect>
+              <circle cx="9" cy="12" r="3" data-field="context-knob"></circle>
+            </svg>
+            <span data-field="context-toggle-label">On</span>
+          </button>
+        </div>
+        <p class="settings-blurb">Pull the paragraph around your selection so issues have the surrounding sentence, not just the snippet.</p>
+        <div class="field capture-range" data-context-range>
+          <label class="field-label" for="qti-context-radius">
+            Radius
+            <span class="range-value" data-field="context-radius-value">240</span>
+            <span class="range-unit">chars each side</span>
+          </label>
+          <input id="qti-context-radius" class="range" type="range" min="0" max="600" step="20" value="240" data-field="context-radius">
+          <div class="range-ticks" aria-hidden="true">
+            <span>0</span><span>200</span><span>400</span><span>600</span>
+          </div>
+        </div>
+      </div>
+
       <footer class="form-actions">
         <button class="btn ghost" type="button" data-action="clear-token">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

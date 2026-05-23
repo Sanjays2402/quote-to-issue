@@ -20,6 +20,7 @@ const STORAGE_KEYS = Object.freeze({
   lastVersion: "qti.lastVersion",
   pendingQuote: "qti.pendingQuote",
   bulkQuotes: "qti.bulkQuotes",
+  captureSettings: "qti.captureSettings",
 });
 
 const CONTEXT_MENU_ID = "qti.fileAsIssue";
@@ -315,7 +316,8 @@ function ensureContextMenu() {
  * surrounding text so the issue body has useful context, not just the snippet.
  * Returns a JSON-safe object — no DOM references leak across the boundary.
  */
-function __qtiCaptureSelection() {
+function __qtiCaptureSelection(opts) {
+  const radius = Math.max(0, Math.min(600, Number(opts?.contextRadius ?? 240) || 0));
   try {
     const sel = window.getSelection && window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
@@ -340,12 +342,12 @@ function __qtiCaptureSelection() {
       block = block.parentNode;
     }
     let contextBefore = "", contextAfter = "";
-    if (block && block.textContent) {
+    if (radius > 0 && block && block.textContent) {
       const full = block.textContent.replace(/\s+/g, " ").trim();
       const idx = full.indexOf(selectionText.replace(/\s+/g, " ").trim());
       if (idx >= 0) {
-        contextBefore = full.slice(Math.max(0, idx - 240), idx).trim();
-        contextAfter = full.slice(idx + selectionText.length, idx + selectionText.length + 240).trim();
+        contextBefore = full.slice(Math.max(0, idx - radius), idx).trim();
+        contextAfter = full.slice(idx + selectionText.length, idx + selectionText.length + radius).trim();
       }
     }
     // Find nearest preceding heading for section anchor.
@@ -368,10 +370,21 @@ function __qtiCaptureSelection() {
 
 async function captureSelectionFromTab(tabId, frameId) {
   if (!chrome.scripting?.executeScript || tabId == null) return null;
+  let radius = 240;
+  try {
+    const out = await chrome.storage.local.get(STORAGE_KEYS.captureSettings);
+    const s = out[STORAGE_KEYS.captureSettings];
+    if (s && typeof s === "object") {
+      const enabled = s.contextEnabled !== false;
+      const r = Number(s.contextRadius);
+      radius = enabled ? (Number.isFinite(r) ? Math.max(0, Math.min(600, Math.round(r))) : 240) : 0;
+    }
+  } catch { /* defaults */ }
   try {
     const results = await chrome.scripting.executeScript({
       target: frameId != null ? { tabId, frameIds: [frameId] } : { tabId },
       func: __qtiCaptureSelection,
+      args: [{ contextRadius: radius }],
     });
     return results?.[0]?.result ?? null;
   } catch (err) {

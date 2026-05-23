@@ -686,6 +686,103 @@ body[data-theme="light"] .template-body { background: rgba(0, 0, 0, 0.04); }
   background: var(--glass-strong);
   border: 1px solid var(--hairline);
 }
+.settings-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--hairline) 18%, var(--hairline) 82%, transparent);
+  margin: 4px 0 2px;
+}
+.capture-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.capture-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.capture-range {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: opacity 200ms var(--ease);
+}
+.capture-range[data-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.capture-range .field-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.range-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.range-unit {
+  color: var(--fg-faint);
+  font-size: 11px;
+  letter-spacing: 0;
+}
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 24px;
+  background: transparent;
+  cursor: pointer;
+}
+.range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent) 0 var(--range-fill, 40%), var(--glass-strong) var(--range-fill, 40%) 100%);
+  border: 1px solid var(--hairline);
+}
+.range::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--glass-strong);
+  border: 1px solid var(--hairline);
+}
+.range::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+  margin-top: -6px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.18);
+  transition: transform 180ms var(--ease);
+}
+.range::-webkit-slider-thumb:hover { transform: scale(1.08); }
+.range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+}
+.range:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--accent-ring); outline-offset: 2px; }
+.range-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  padding: 0 2px;
+}
 .token-status {
   display: flex;
   align-items: center;

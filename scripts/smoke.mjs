@@ -380,3 +380,20 @@ for (const cmd of ["file-issue-now", "add-to-batch"]) {
 }
 console.log("\u2713 commands smoke ok");
 
+// --- Capture settings (surrounding-context toggle + radius) --------------
+const { normalizeCaptureSettings, DEFAULT_CAPTURE_SETTINGS, CONTEXT_RADIUS_MAX } = globalThis.__qti;
+if (typeof normalizeCaptureSettings !== "function") { console.error("normalizeCaptureSettings missing"); process.exit(1); }
+if (!DEFAULT_CAPTURE_SETTINGS || DEFAULT_CAPTURE_SETTINGS.contextEnabled !== true) { console.error("DEFAULT_CAPTURE_SETTINGS invalid"); process.exit(1); }
+if (DEFAULT_CAPTURE_SETTINGS.contextRadius !== 240) { console.error("DEFAULT_CAPTURE_SETTINGS radius wrong"); process.exit(1); }
+const capDef = normalizeCaptureSettings(undefined);
+if (capDef.contextEnabled !== true || capDef.contextRadius !== 240) { console.error("normalizeCaptureSettings undefined wrong"); process.exit(1); }
+const capOff = normalizeCaptureSettings({ contextEnabled: false, contextRadius: 400 });
+if (capOff.contextEnabled !== false || capOff.contextRadius !== 0) { console.error("disabled should zero radius"); process.exit(1); }
+const capClamp = normalizeCaptureSettings({ contextEnabled: true, contextRadius: 99999 });
+if (capClamp.contextRadius !== CONTEXT_RADIUS_MAX) { console.error("radius clamp wrong:", capClamp); process.exit(1); }
+const capNeg = normalizeCaptureSettings({ contextEnabled: true, contextRadius: -10 });
+if (capNeg.contextRadius !== 0) { console.error("radius negative clamp wrong"); process.exit(1); }
+const capStr = normalizeCaptureSettings({ contextEnabled: true, contextRadius: "180" });
+if (capStr.contextRadius !== 180) { console.error("radius string coerce wrong"); process.exit(1); }
+console.log("\u2713 capture settings smoke ok");
+

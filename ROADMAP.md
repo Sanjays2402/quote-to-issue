@@ -20,7 +20,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Keyboard shortcut to file issue without opening popup
 - [x] Quick-repo switcher with fuzzy search in popup
 - [x] Issue title auto-suggestion from selection (first sentence, smart truncate)
-- [ ] Surrounding-context capture (N chars before/after selection) toggle
+- [x] Surrounding-context capture (N chars before/after selection) toggle
 - [ ] Author/byline + publish date scraping for news/blog pages
 - [ ] Code block detection: wrap selections from <pre>/<code> as fenced markdown
 - [ ] Recent-issues panel: list last 10 issues filed, click to reopen on GitHub
