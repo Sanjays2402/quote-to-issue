@@ -30,7 +30,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Duplicate-issue detector: search repo for similar open issues before filing
 - [x] Issue body templates with variables ({{url}}, {{selection}}, {{title}}, {{date}})
 - [x] OAuth device-flow login as alternative to PAT
-- [ ] Per-repo issue type picker (bug/feature/question) with matching label presets
+- [x] Per-repo issue type picker (bug/feature/question) with matching label presets
 - [ ] Annotated screenshot: draw rectangle/arrow over capture before attaching
 - [ ] Highlighted-selection screenshot mode (mask page, keep selection visible)
 - [ ] Issue success toast with copy-link and open-in-tab actions

@@ -18,6 +18,7 @@ const STORAGE_KEYS = Object.freeze({
   repoDefaults: "qti.repoDefaults",
 
   drafts: "qti.drafts",
+  repoIssueTypes: "qti.repoIssueTypes",
   bulkQuotes: "qti.bulkQuotes",
   bulkState: "qti.bulkState",
   captureSettings: "qti.captureSettings",
@@ -1109,6 +1110,69 @@ async function dataUrlToBlob(dataUrl) {
   return new Blob([buf], { type: mime });
 }
 
+// ---------------------------------------------------------------------------
+// Per-repo issue type picker (bug / feature / question)
+// ---------------------------------------------------------------------------
+
+const ISSUE_TYPE_PRESETS = Object.freeze({
+  bug: Object.freeze(["bug"]),
+  feature: Object.freeze(["enhancement"]),
+  question: Object.freeze(["question"]),
+});
+const ISSUE_TYPE_KEYS = Object.freeze(["bug", "feature", "question"]);
+
+function normalizeIssueType(t) {
+  if (typeof t !== "string") return null;
+  const k = t.trim().toLowerCase();
+  return ISSUE_TYPE_KEYS.includes(k) ? k : null;
+}
+
+function issueTypeLabels(type) {
+  const k = normalizeIssueType(type);
+  if (!k) return [];
+  return ISSUE_TYPE_PRESETS[k].slice();
+}
+
+function normalizeRepoIssueTypes(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const key = repoKey(k);
+    if (!key) continue;
+    const t = normalizeIssueType(typeof v === "string" ? v : v?.type);
+    if (!t) continue;
+    out[key] = t;
+  }
+  return out;
+}
+
+async function getAllRepoIssueTypes() {
+  if (!chrome?.storage?.local) return {};
+  const out = await chrome.storage.local.get(STORAGE_KEYS.repoIssueTypes);
+  return normalizeRepoIssueTypes(out[STORAGE_KEYS.repoIssueTypes]);
+}
+
+async function getRepoIssueType(repo) {
+  const key = repoKey(repo);
+  if (!key) return null;
+  const all = await getAllRepoIssueTypes();
+  return all[key] || null;
+}
+
+async function setRepoIssueType(repo, type) {
+  const key = repoKey(repo);
+  if (!key || !chrome?.storage?.local) return null;
+  const all = await getAllRepoIssueTypes();
+  const t = normalizeIssueType(type);
+  if (!t) {
+    if (all[key]) { delete all[key]; await chrome.storage.local.set({ [STORAGE_KEYS.repoIssueTypes]: all }); }
+    return null;
+  }
+  all[key] = t;
+  await chrome.storage.local.set({ [STORAGE_KEYS.repoIssueTypes]: all });
+  return t;
+}
+
 // expose for tests
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
@@ -1121,6 +1185,7 @@ if (typeof globalThis !== "undefined") {
     normalizeRecentIssues, MAX_RECENT_ISSUES,
     normalizeOfflineQueue, MAX_OFFLINE_QUEUE, isRetryableErrorMessage,
     extractDupTokens, scoreDuplicateMatch, rankDuplicates,
+    normalizeRepoIssueTypes, normalizeIssueType, issueTypeLabels, ISSUE_TYPE_PRESETS, ISSUE_TYPE_KEYS,
     renderMarkdownPreview, escapeHtml,
     normalizeCaptureSettings, DEFAULT_CAPTURE_SETTINGS,
     CONTEXT_RADIUS_MIN, CONTEXT_RADIUS_MAX,
@@ -1328,6 +1393,9 @@ function buildFormNode(q, state) {
   const labelsInput = node.querySelector('[data-field="labels"]');
   const repoHint = node.querySelector('[data-field="repo-hint"]');
   const chipRow = node.querySelector('[data-field="label-chips"]');
+  const issueTypeRow = node.querySelector("[data-issue-type-row]");
+  const issueTypeBtns = issueTypeRow ? Array.from(issueTypeRow.querySelectorAll('[data-action="set-issue-type"]')) : [];
+  const issueTypeStatus = node.querySelector('[data-field="issue-type-status"]');
   const previewBox = node.querySelector("[data-preview]");
   const previewBody = node.querySelector('[data-field="preview-body"]');
   const previewRendered = node.querySelector('[data-field="preview-rendered"]');
@@ -1627,6 +1695,7 @@ function buildFormNode(q, state) {
   validateRepo();
   loadTemplateForRepo();
   loadDefaultsForRepo();
+  loadIssueTypeForRepo();
 
   repoInput.addEventListener("input", () => {
     validateRepo();
@@ -1637,6 +1706,8 @@ function buildFormNode(q, state) {
     loadTemplateForRepo();
     defaultsAutoApplied = false;
     loadDefaultsForRepo();
+    issueTypeAutoApplied = false;
+    loadIssueTypeForRepo();
   });
   repoInput.addEventListener("focus", () => {
     if (recents.length > 0) openRecents();
@@ -1699,6 +1770,94 @@ function buildFormNode(q, state) {
     saveFormState({ assignees: assigneesInput.value });
     refreshDefaultsStatus();
   });
+
+  // --- Per-repo issue type picker ----------------------------------------
+  let activeIssueType = null;
+  let issueTypeAutoApplied = false;
+  function setIssueTypeButtons(type) {
+    for (const btn of issueTypeBtns) {
+      const on = btn.dataset.issueType === type;
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    }
+  }
+  function showIssueTypeStatus(msg, state) {
+    if (!issueTypeStatus) return;
+    if (!msg) { issueTypeStatus.hidden = true; issueTypeStatus.textContent = ""; return; }
+    issueTypeStatus.hidden = false;
+    issueTypeStatus.dataset.state = state || "applied";
+    issueTypeStatus.textContent = msg;
+  }
+  function mergeLabels(existing, preset) {
+    const seen = new Set();
+    const out = [];
+    for (const l of [...existing, ...preset]) {
+      const k = String(l || "").trim();
+      if (!k) continue;
+      const key = k.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(k);
+    }
+    return out;
+  }
+  function applyIssueType(type, { persist = true, statusMsg } = {}) {
+    const t = normalizeIssueType(type);
+    activeIssueType = t;
+    setIssueTypeButtons(t);
+    if (!t) {
+      showIssueTypeStatus("", "");
+      return;
+    }
+    const preset = issueTypeLabels(t);
+    const existing = parseLabels(labelsInput.value);
+    const merged = mergeLabels(existing, preset);
+    if (merged.join(",") !== existing.join(",")) {
+      labelsInput.value = merged.join(", ");
+      labelsInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    if (statusMsg !== undefined) showIssueTypeStatus(statusMsg, "applied");
+    else showIssueTypeStatus(`${t} preset applied`, "applied");
+    if (persist) {
+      const repoParsed = parseRepo(repoInput.value);
+      if (repoParsed.ok) setRepoIssueType(repoParsed.value, t).catch(() => {});
+    }
+  }
+  async function loadIssueTypeForRepo() {
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) {
+      activeIssueType = null;
+      issueTypeAutoApplied = false;
+      setIssueTypeButtons(null);
+      showIssueTypeStatus("", "");
+      return;
+    }
+    const saved = await getRepoIssueType(repoParsed.value).catch(() => null);
+    if (saved && !issueTypeAutoApplied) {
+      issueTypeAutoApplied = true;
+      applyIssueType(saved, { persist: false, statusMsg: `${saved} · saved for ${repoParsed.value}` });
+    } else if (!saved) {
+      activeIssueType = null;
+      setIssueTypeButtons(null);
+      showIssueTypeStatus("", "");
+    }
+  }
+  for (const btn of issueTypeBtns) {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const t = btn.dataset.issueType;
+      if (activeIssueType === t) {
+        // Toggle off
+        activeIssueType = null;
+        setIssueTypeButtons(null);
+        showIssueTypeStatus("", "");
+        const repoParsed = parseRepo(repoInput.value);
+        if (repoParsed.ok) setRepoIssueType(repoParsed.value, null).catch(() => {});
+        return;
+      }
+      issueTypeAutoApplied = true;
+      applyIssueType(t);
+    });
+  }
 
   // --- Per-repo defaults (labels + assignees) -----------------------------
   function applyDefaults(d) {
