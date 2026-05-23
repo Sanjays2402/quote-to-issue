@@ -103,6 +103,58 @@
       </footer>
     </section>
 
+    <section class="options-card glass" aria-labelledby="opt-oauth-h" data-oauth-card>
+      <header class="options-card-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.46-1.11-1.46-.91-.62.07-.6.07-.6 1 .07 1.53 1.04 1.53 1.04.9 1.53 2.35 1.09 2.92.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.56 9.56 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z"></path>
+          </svg>
+          <h2 id="opt-oauth-h" class="options-card-title">Sign in with GitHub</h2>
+        </div>
+        <div class="token-status" data-field="oauth-status" data-state="idle">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-text" data-field="oauth-status-text">Device flow ready</span>
+        </div>
+      </header>
+      <p class="settings-blurb">Alternative to pasting a PAT. Uses GitHub's <strong>device flow</strong> with an OAuth App you own — no client secret, no redirect URI. The resulting access token is stored with the same AES-GCM envelope as a PAT.</p>
+
+      <div class="field">
+        <label class="field-label" for="opt-oauth-client">OAuth App client ID</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="14" rx="3"></rect>
+            <path d="M3 9h18"></path>
+          </svg>
+          <input id="opt-oauth-client" class="input" type="text" placeholder="Iv1.… or Ov23li…" autocomplete="off" spellcheck="false" data-field="oauth-client">
+        </div>
+        <p class="field-hint" data-field="oauth-hint">Create one at github.com/settings/developers → New OAuth App → enable “Device flow”.</p>
+      </div>
+
+      <div class="oauth-codebox" data-field="oauth-codebox" hidden>
+        <div class="oauth-code-block">
+          <span class="oauth-code-label">Enter this code on GitHub</span>
+          <code class="oauth-code" data-field="oauth-user-code">--------</code>
+        </div>
+        <a class="oauth-verify-link" data-field="oauth-verify-link" target="_blank" rel="noreferrer">Open github.com/login/device</a>
+        <p class="oauth-code-hint" data-field="oauth-code-hint">Waiting for approval…</p>
+      </div>
+
+      <footer class="form-actions options-actions">
+        <button class="btn ghost" type="button" data-action="cancel-oauth" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+          </svg>
+          <span>Cancel</span>
+        </button>
+        <button class="btn primary" type="button" data-action="start-oauth" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10 17l5-5-5-5"></path><path d="M4 12h11"></path>
+          </svg>
+          <span>Sign in with GitHub</span>
+        </button>
+      </footer>
+    </section>
+
     <section class="options-card glass" aria-labelledby="opt-rot-h">
       <header class="options-card-head">
         <div class="quote-meta">

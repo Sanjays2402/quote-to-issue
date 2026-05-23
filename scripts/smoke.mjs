@@ -631,6 +631,133 @@ if ((await tok2.getRotationHistory()).length !== 0) { console.error("clearRotati
 await tok2.clearToken();
 console.log("\u2713 settings-rotation smoke ok");
 
+// --- OAuth device flow ----------------------------------------------------
+await import("../src/oauth.js").catch((err) => { console.error("oauth.js import failed:", err.message); process.exit(1); });
+const oauth = globalThis.__qtiOauth;
+if (!oauth || typeof oauth.runDeviceFlow !== "function") {
+  console.error("oauth helpers not exported on globalThis.__qtiOauth"); process.exit(1);
+}
+if (!oauth.validateClientId("Iv1.abcdef1234567890")) { console.error("validateClientId false-negative Iv1"); process.exit(1); }
+if (!oauth.validateClientId("Ov23liabcDEF12345_-.")) { console.error("validateClientId false-negative Ov23"); process.exit(1); }
+for (const bad of ["", "short", "has space here", "!!!nope!!!", "x".repeat(120)]) {
+  if (oauth.validateClientId(bad)) { console.error("validateClientId false-positive:", bad); process.exit(1); }
+}
+// parseDeviceCodeResponse
+try { oauth.parseDeviceCodeResponse(null); console.error("parseDeviceCodeResponse null should throw"); process.exit(1); } catch {}
+try { oauth.parseDeviceCodeResponse({ error: "access_denied", error_description: "nope" }); console.error("parseDeviceCodeResponse error should throw"); process.exit(1); } catch (e) {
+  if (!String(e.message).includes("nope")) { console.error("parseDeviceCodeResponse should surface description"); process.exit(1); }
+}
+const pd = oauth.parseDeviceCodeResponse({ device_code: "D", user_code: "AB-CD", verification_uri: "https://github.com/login/device", expires_in: 900, interval: 5 });
+if (pd.deviceCode !== "D" || pd.userCode !== "AB-CD" || pd.interval !== 5) { console.error("parseDeviceCodeResponse bad:", pd); process.exit(1); }
+if (oauth.parseDeviceCodeResponse({ device_code: "D", user_code: "U", verification_uri: "u", expires_in: 0, interval: 0 }).interval !== 5) {
+  console.error("parseDeviceCodeResponse default interval"); process.exit(1);
+}
+// parseTokenResponse
+if (oauth.parseTokenResponse({ access_token: "ghp_abc", scope: "repo", token_type: "bearer" }).state !== "ok") { console.error("parseTokenResponse ok"); process.exit(1); }
+if (oauth.parseTokenResponse({ error: "authorization_pending" }).state !== "pending") { console.error("parseTokenResponse pending"); process.exit(1); }
+const slow = oauth.parseTokenResponse({ error: "slow_down", interval: 10 });
+if (slow.state !== "slow_down" || slow.interval !== 10) { console.error("parseTokenResponse slow_down"); process.exit(1); }
+if (oauth.parseTokenResponse({ error: "expired_token" }).state !== "expired") { console.error("parseTokenResponse expired"); process.exit(1); }
+if (oauth.parseTokenResponse({ error: "access_denied" }).state !== "denied") { console.error("parseTokenResponse denied"); process.exit(1); }
+if (oauth.parseTokenResponse({ error: "weird" }).state !== "error") { console.error("parseTokenResponse error"); process.exit(1); }
+// runDeviceFlow with injected fetch + sleep
+async function fakeFetch(seq) {
+  let i = 0;
+  return async () => {
+    const next = seq[Math.min(i++, seq.length - 1)];
+    if (next.throw) throw next.throw;
+    return { ok: next.ok !== false, status: next.status || 200, async json() { return next.body; } };
+  };
+}
+// Happy path: device-code then pending then ok
+{
+  const fetchImpl = await fakeFetch([
+    { body: { device_code: "DEV", user_code: "AB-CD", verification_uri: "https://github.com/login/device", verification_uri_complete: "https://github.com/login/device?user_code=AB-CD", expires_in: 900, interval: 1 } },
+    { body: { error: "authorization_pending" } },
+    { body: { access_token: "gho_" + "x".repeat(36), scope: "repo", token_type: "bearer" } },
+  ]);
+  let codeSeen = null;
+  const result = await oauth.runDeviceFlow({
+    clientId: "Iv1.abcdef1234567890",
+    onCode: (c) => { codeSeen = c; },
+    fetchImpl,
+    sleepImpl: async () => {},
+  });
+  if (!codeSeen || codeSeen.userCode !== "AB-CD") { console.error("runDeviceFlow onCode not fired"); process.exit(1); }
+  if (!result.token.startsWith("gho_")) { console.error("runDeviceFlow token bad:", result); process.exit(1); }
+}
+// Denied
+{
+  const fetchImpl = await fakeFetch([
+    { body: { device_code: "D", user_code: "U", verification_uri: "v", expires_in: 900, interval: 1 } },
+    { body: { error: "access_denied" } },
+  ]);
+  let denied = false;
+  try {
+    await oauth.runDeviceFlow({ clientId: "Iv1.abcdef1234567890", fetchImpl, sleepImpl: async () => {} });
+  } catch (e) { denied = /denied/i.test(e.message); }
+  if (!denied) { console.error("runDeviceFlow should throw on denied"); process.exit(1); }
+}
+// Slow down adjusts interval and continues
+{
+  const calls = [];
+  const fetchImpl = await fakeFetch([
+    { body: { device_code: "D", user_code: "U", verification_uri: "v", expires_in: 900, interval: 1 } },
+    { body: { error: "slow_down", interval: 8 } },
+    { body: { access_token: "gho_" + "y".repeat(36) } },
+  ]);
+  const sleepImpl = async (ms) => { calls.push(ms); };
+  const result = await oauth.runDeviceFlow({ clientId: "Iv1.abcdef1234567890", fetchImpl, sleepImpl });
+  if (calls.length < 2) { console.error("slow_down should not break the loop"); process.exit(1); }
+  if (calls[1] < 6000) { console.error("slow_down should grow interval"); process.exit(1); }
+  if (!result.token) { console.error("slow_down then ok should resolve"); process.exit(1); }
+}
+// Abort signal
+{
+  const ac = new AbortController();
+  const fetchImpl = async () => ({ ok: true, async json() { return { device_code: "D", user_code: "U", verification_uri: "v", expires_in: 900, interval: 1 }; } });
+  ac.abort();
+  let aborted = false;
+  try { await oauth.runDeviceFlow({ clientId: "Iv1.abcdef1234567890", fetchImpl, sleepImpl: async () => {}, signal: ac.signal }); }
+  catch (e) { aborted = /abort/i.test(e.message); }
+  if (!aborted) { console.error("runDeviceFlow should reject when aborted"); process.exit(1); }
+}
+// Invalid client id rejected immediately
+{
+  let rej = false;
+  try { await oauth.runDeviceFlow({ clientId: "bad id", fetchImpl: async () => ({ ok: true, async json() { return {}; } }) }); }
+  catch { rej = true; }
+  if (!rej) { console.error("runDeviceFlow should reject bad client id"); process.exit(1); }
+}
+
+// Scaffolding tokens for options page + manifest
+const optHtml2 = fs.readFileSync("src/options.html", "utf8");
+for (const needle of [
+  "data-oauth-card",
+  'data-field="oauth-client"',
+  'data-field="oauth-status"',
+  'data-field="oauth-codebox"',
+  'data-field="oauth-user-code"',
+  'data-field="oauth-verify-link"',
+  'data-field="oauth-code-hint"',
+  'data-action="start-oauth"',
+  'data-action="cancel-oauth"',
+  "Sign in with GitHub",
+  "device flow",
+]) {
+  if (!optHtml2.includes(needle)) { console.error("options.html missing oauth token:", needle); process.exit(1); }
+}
+const optCss2 = fs.readFileSync("src/options.css", "utf8");
+for (const needle of [".oauth-codebox", ".oauth-code", ".oauth-verify-link", ".oauth-code-hint"]) {
+  if (!optCss2.includes(needle)) { console.error("options.css missing oauth token:", needle); process.exit(1); }
+}
+const optJs2 = fs.readFileSync("src/options.js", "utf8");
+for (const needle of ["runDeviceFlow", "validateClientId", "qti.oauthClientId", "showCode", "resetOauthUi"]) {
+  if (!optJs2.includes(needle)) { console.error("options.js missing oauth token:", needle); process.exit(1); }
+}
+if (!fs.existsSync("src/oauth.js")) { console.error("src/oauth.js missing"); process.exit(1); }
+console.log("\u2713 oauth device-flow smoke ok");
+
 // --- Offline queue --------------------------------------------------------
 import fsRequired from "node:fs";
 const swOffline = fsRequired.readFileSync("src/background.js", "utf8");

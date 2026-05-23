@@ -1,4 +1,4 @@
-// Quote to Issue — Settings page with token rotation history.
+// Quote to Issue — Settings page with token rotation history + OAuth device flow.
 import {
   looksLikeGithubToken,
   previewToken,
@@ -10,6 +10,9 @@ import {
   getRotationHistory,
   clearRotationHistory,
 } from "./token.js";
+import { runDeviceFlow, validateClientId } from "./oauth.js";
+
+const OAUTH_CLIENT_KEY = "qti.oauthClientId";
 
 // --- Theme (mirrors popup behaviour) -------------------------------------
 const THEME_MODES = ["system", "light", "dark"];
@@ -252,10 +255,122 @@ async function refreshRotations() {
   }
 }
 
+// --- OAuth device flow --------------------------------------------------
+const oauthCard = document.querySelector('[data-oauth-card]');
+const oauthClientInput = document.querySelector('[data-field="oauth-client"]');
+const oauthHint = document.querySelector('[data-field="oauth-hint"]');
+const oauthStatus = document.querySelector('[data-field="oauth-status"]');
+const oauthStatusText = document.querySelector('[data-field="oauth-status-text"]');
+const oauthCodebox = document.querySelector('[data-field="oauth-codebox"]');
+const oauthUserCode = document.querySelector('[data-field="oauth-user-code"]');
+const oauthVerifyLink = document.querySelector('[data-field="oauth-verify-link"]');
+const oauthCodeHint = document.querySelector('[data-field="oauth-code-hint"]');
+const oauthStartBtn = document.querySelector('[data-action="start-oauth"]');
+const oauthCancelBtn = document.querySelector('[data-action="cancel-oauth"]');
+
+let oauthAbort = null;
+
+function setOauthState(state, message) {
+  if (!oauthStatus) return;
+  oauthStatus.dataset.state = state;
+  if (message != null) oauthStatusText.textContent = message;
+}
+
+function updateOauthActionState() {
+  if (!oauthStartBtn) return;
+  oauthStartBtn.disabled = !validateClientId(oauthClientInput.value.trim()) || !!oauthAbort;
+}
+
+async function loadStoredClientId() {
+  try {
+    const out = await chrome?.storage?.local?.get?.(OAUTH_CLIENT_KEY);
+    const v = out?.[OAUTH_CLIENT_KEY];
+    if (typeof v === "string" && validateClientId(v)) {
+      oauthClientInput.value = v;
+    }
+  } catch {}
+  updateOauthActionState();
+}
+
+async function persistClientId(v) {
+  try { await chrome?.storage?.local?.set?.({ [OAUTH_CLIENT_KEY]: v }); } catch {}
+}
+
+function resetOauthUi() {
+  oauthCodebox.hidden = true;
+  oauthCancelBtn.hidden = true;
+  oauthStartBtn.hidden = false;
+  oauthUserCode.textContent = "--------";
+  oauthVerifyLink.removeAttribute("href");
+  oauthCodeHint.textContent = "Waiting for approval…";
+  oauthAbort = null;
+  updateOauthActionState();
+}
+
+function showCode(code) {
+  oauthUserCode.textContent = code.userCode;
+  const url = code.verificationUriComplete || code.verificationUri;
+  oauthVerifyLink.setAttribute("href", url);
+  oauthVerifyLink.textContent = `Open ${code.verificationUri.replace(/^https?:\/\//, "")}`;
+  oauthCodebox.hidden = false;
+  oauthCancelBtn.hidden = false;
+  oauthStartBtn.hidden = true;
+  oauthCodeHint.textContent = `Enter the code, then approve. Expires in ~${Math.round(code.expiresIn / 60)} min.`;
+  setOauthState("pending", "Waiting for GitHub approval…");
+}
+
+oauthClientInput?.addEventListener("input", () => {
+  const v = oauthClientInput.value.trim();
+  if (v && !validateClientId(v)) {
+    oauthHint.textContent = "Doesn't look like an OAuth App client ID.";
+    oauthHint.classList.add("error");
+  } else {
+    oauthHint.textContent = "Create one at github.com/settings/developers → New OAuth App → enable “Device flow”.";
+    oauthHint.classList.remove("error");
+  }
+  updateOauthActionState();
+});
+
+oauthStartBtn?.addEventListener("click", async () => {
+  const clientId = oauthClientInput.value.trim();
+  if (!validateClientId(clientId)) return;
+  await persistClientId(clientId);
+  const controller = new AbortController();
+  oauthAbort = controller;
+  oauthStartBtn.disabled = true;
+  setOauthState("pending", "Requesting device code…");
+  oauthCodeHint.textContent = "Requesting device code…";
+  try {
+    const { token } = await runDeviceFlow({
+      clientId,
+      onCode: showCode,
+      signal: controller.signal,
+    });
+    await setToken(token);
+    setOauthState("saved", "Signed in. Token saved.");
+    oauthCodeHint.textContent = "Token saved. You can close this card.";
+    oauthCancelBtn.hidden = true;
+    oauthStartBtn.hidden = false;
+    oauthAbort = null;
+    await refreshTokenStatus();
+  } catch (err) {
+    setOauthState("error", `Sign-in failed: ${err?.message || err}`);
+    oauthCodeHint.textContent = String(err?.message || err);
+    resetOauthUi();
+  }
+});
+
+oauthCancelBtn?.addEventListener("click", () => {
+  if (oauthAbort) oauthAbort.abort();
+  setOauthState("idle", "Cancelled");
+  resetOauthUi();
+});
+
 // --- Boot ----------------------------------------------------------------
 (async function boot() {
   await initTheme();
   await refreshTokenStatus();
   await refreshRotations();
+  await loadStoredClientId();
   tokenInput.focus?.();
 })();
