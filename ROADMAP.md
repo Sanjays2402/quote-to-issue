@@ -5,7 +5,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] MV3 manifest + service worker scaffolding
 - [x] Context menu: 'File as GitHub issue' on selection
 - [x] Capture selection text + page URL + page title
-- [ ] Popup form: repo owner/name, labels, body preview
+- [x] Popup form: repo owner/name, labels, body preview
 - [ ] Personal access token storage (chrome.storage.local, encrypted)
 - [ ] POST to GitHub issues API with markdown body
 - [ ] Auto-screenshot of visible tab attached as image
