@@ -22,7 +22,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Issue title auto-suggestion from selection (first sentence, smart truncate)
 - [x] Surrounding-context capture (N chars before/after selection) toggle
 - [x] Author/byline + publish date scraping for news/blog pages
-- [ ] Code block detection: wrap selections from <pre>/<code> as fenced markdown
+- [x] Code block detection: wrap selections from <pre>/<code> as fenced markdown
 - [ ] Recent-issues panel: list last 10 issues filed, click to reopen on GitHub
 - [ ] Per-repo default labels + assignees with chip editor
 - [ ] Settings page with liquid-glass design and token rotation

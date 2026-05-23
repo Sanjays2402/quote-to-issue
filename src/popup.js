@@ -279,11 +279,26 @@ function buildSourceUrlWithAnchor(q) {
   return `${url}#:~:text=${enc(startWords)},${enc(endWords)}`;
 }
 
+function buildCodeFence(q) {
+  const raw = String(q?.selectionText || "");
+  if (!raw) return "";
+  let maxRun = 0;
+  const re = /`+/g;
+  let m;
+  while ((m = re.exec(raw))) { if (m[0].length > maxRun) maxRun = m[0].length; }
+  const fence = "`".repeat(Math.max(3, maxRun + 1));
+  const lang = String(q?.codeLanguage || "").trim().toLowerCase().replace(/[^a-z0-9+#._-]/g, "").slice(0, 32);
+  return `${fence}${lang}\n${raw.replace(/\r\n?/g, "\n")}\n${fence}`;
+}
+
 function buildMarkdownBody(q) {
   if (!q) return "";
   const lines = [];
   const quoted = (q.selectionText || "").trim();
-  if (quoted) {
+  if (quoted && q.isCode) {
+    lines.push(buildCodeFence(q));
+    lines.push("");
+  } else if (quoted) {
     for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
     lines.push("");
   }
@@ -452,9 +467,12 @@ function renderTemplate(tmpl, q) {
     const dim = (q.screenshot.width && q.screenshot.height) ? `${q.screenshot.width}\u00d7${q.screenshot.height}` : "PNG";
     screenshotNote = `**Screenshot:** captured (${dim}) — paste from clipboard or attach the downloaded PNG when filing.`;
   }
+  const quoteCode = q?.isCode ? buildCodeFence(q) : (quoted ? "```\n" + quoted + "\n```" : "");
   const vars = {
     quote: quoted,
     quote_blockquote: quoteBlock,
+    quote_code: quoteCode,
+    code_language: q?.codeLanguage || "",
     source_title: sourceTitle,
     source_url: sourceUrl,
     source_url_anchor: sourceUrlAnchor,
@@ -741,6 +759,8 @@ function normalizeBulkQuotes(list) {
       contextBefore: String(raw.contextBefore || "").slice(0, 4000),
       contextAfter: String(raw.contextAfter || "").slice(0, 4000),
       nearestHeading: String(raw.nearestHeading || "").slice(0, 256),
+      isCode: !!raw.isCode,
+      codeLanguage: String(raw.codeLanguage || "").slice(0, 32),
       author: String(raw.author || "").slice(0, 200),
       publishedAt: String(raw.publishedAt || "").slice(0, 64),
       pageUrl,
@@ -831,7 +851,7 @@ async function dataUrlToBlob(dataUrl) {
 // expose for tests
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
-    parseRepo, parseLabels, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildSourceUrlWithAnchor, deriveScreenshotFilename,
+    parseRepo, parseLabels, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, buildSourceUrlWithAnchor, deriveScreenshotFilename,
     formatBytes, formatPublishDate, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeDrafts, MAX_DRAFTS,

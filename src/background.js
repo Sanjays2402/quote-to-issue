@@ -100,11 +100,27 @@ function __qtiBuildSourceUrlAnchor(q) {
   return `${url}#:~:text=${enc(startWords)},${enc(endWords)}`;
 }
 
+function __qtiBuildCodeFence(q) {
+  const raw = String(q?.selectionText || "");
+  if (!raw) return "";
+  // Pick a fence longer than any backtick run inside the code, per CommonMark.
+  let maxRun = 0;
+  const re = /`+/g;
+  let m;
+  while ((m = re.exec(raw))) { if (m[0].length > maxRun) maxRun = m[0].length; }
+  const fence = "`".repeat(Math.max(3, maxRun + 1));
+  const lang = String(q?.codeLanguage || "").trim().toLowerCase().replace(/[^a-z0-9+#._-]/g, "").slice(0, 32);
+  return `${fence}${lang}\n${raw.replace(/\r\n?/g, "\n")}\n${fence}`;
+}
+
 function __qtiBuildMarkdownBody(q) {
   if (!q) return "";
   const lines = [];
   const quoted = String(q.selectionText || "").trim();
-  if (quoted) {
+  if (quoted && q && q.isCode) {
+    lines.push(__qtiBuildCodeFence(q));
+    lines.push("");
+  } else if (quoted) {
     for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
     lines.push("");
   }
@@ -152,9 +168,12 @@ function __qtiRenderTemplate(tpl, q) {
   if (!tpl) return "";
   const quoted = String(q?.selectionText || "").trim();
   const quoteBlock = quoted ? quoted.split(/\r?\n/).map((ln) => "> " + ln).join("\n") : "";
+  const quoteCode = (q && q.isCode) ? __qtiBuildCodeFence(q) : (quoted ? "```\n" + quoted + "\n```" : "");
   const repls = {
     quote: quoted,
     quote_blockquote: quoteBlock,
+    quote_code: quoteCode,
+    code_language: String(q?.codeLanguage || ""),
     source_title: String(q?.pageTitle || ""),
     source_url: String(q?.pageUrl || ""),
     source_url_anchor: __qtiBuildSourceUrlAnchor(q) || String(q?.pageUrl || ""),
@@ -434,6 +453,44 @@ function __qtiCaptureSelection(opts) {
     // Walk up to a block-ish ancestor for the surrounding paragraph.
     let node = range.commonAncestorContainer;
     if (node.nodeType !== 1) node = node.parentNode;
+    // Code detection — walk up to find an enclosing <pre>/<code>, sniff the
+    // language from common class hints (language-*, lang-*, highlight-*) or
+    // data-language / data-lang attributes used by Prism / highlight.js / Rouge.
+    let isCode = false;
+    let codeLanguage = "";
+    {
+      let c = (node.nodeType === 1) ? node : node.parentNode;
+      const langFromClass = (cls) => {
+        const s = String(cls || "");
+        const m1 = s.match(/(?:language|lang|highlight|brush)[-:]([A-Za-z0-9+#._-]+)/i);
+        if (m1) return m1[1];
+        const tokens = s.split(/\s+/);
+        for (const tk of tokens) {
+          if (/^(hljs|prettyprint|prism|code|pre|highlight)$/i.test(tk)) continue;
+          if (/^[A-Za-z][A-Za-z0-9+#._-]{0,30}$/.test(tk) && /^(js|ts|jsx|tsx|py|python|rb|ruby|go|rs|rust|java|kotlin|swift|c|cpp|cs|csharp|php|html|css|scss|sass|less|json|yaml|yml|toml|xml|sh|bash|zsh|fish|sql|md|markdown|dockerfile|makefile|lua|perl|r|scala|dart|elixir|ex|erl|hs|haskell|clj|clojure|fs|nim|zig|vim|tex|graphql|proto)$/i.test(tk)) return tk;
+        }
+        return "";
+      };
+      while (c && c !== document.body) {
+        const tag = c.tagName;
+        if (tag === "PRE" || tag === "CODE") {
+          isCode = true;
+          if (!codeLanguage) {
+            codeLanguage = langFromClass(c.className)
+              || c.getAttribute?.("data-language")
+              || c.getAttribute?.("data-lang")
+              || "";
+          }
+          // Inspect descendant <code> for language when sitting on a <pre>.
+          if (!codeLanguage && tag === "PRE") {
+            const inner = c.querySelector?.("code");
+            if (inner) codeLanguage = langFromClass(inner.className) || inner.getAttribute?.("data-language") || inner.getAttribute?.("data-lang") || "";
+          }
+        }
+        c = c.parentNode;
+      }
+      codeLanguage = String(codeLanguage || "").trim().toLowerCase().slice(0, 32);
+    }
     const BLOCK = /^(P|DIV|LI|BLOCKQUOTE|ARTICLE|SECTION|TD|PRE|FIGCAPTION|DD|DT)$/;
     let block = node;
     while (block && block !== document.body && !(block.tagName && BLOCK.test(block.tagName))) {
@@ -460,9 +517,9 @@ function __qtiCaptureSelection(opts) {
       if (nearestHeading) break;
       cur = cur.parentNode;
     }
-    return { selectionText, selectionHtml, contextBefore, contextAfter, nearestHeading, author: byline.author, publishedAt: byline.publishedAt };
+    return { selectionText, selectionHtml, contextBefore, contextAfter, nearestHeading, isCode, codeLanguage, author: byline.author, publishedAt: byline.publishedAt };
   } catch (err) {
-    return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "", author: byline.author || "", publishedAt: byline.publishedAt || "", error: String(err && err.message || err) };
+    return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "", isCode: false, codeLanguage: "", author: byline.author || "", publishedAt: byline.publishedAt || "", error: String(err && err.message || err) };
   }
 }
 
@@ -549,6 +606,8 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
     contextBefore: enriched?.contextBefore ?? "",
     contextAfter: enriched?.contextAfter ?? "",
     nearestHeading: enriched?.nearestHeading ?? "",
+    isCode: !!enriched?.isCode,
+    codeLanguage: enriched?.codeLanguage ?? "",
     author: enriched?.author ?? "",
     publishedAt: enriched?.publishedAt ?? "",
     pageUrl: info.pageUrl ?? tab?.url ?? "",
@@ -635,6 +694,8 @@ async function __qtiBuildQuoteFromActiveTab() {
       contextBefore: enriched?.contextBefore ?? "",
       contextAfter: enriched?.contextAfter ?? "",
       nearestHeading: enriched?.nearestHeading ?? "",
+      isCode: !!enriched?.isCode,
+      codeLanguage: enriched?.codeLanguage ?? "",
       author: enriched?.author ?? "",
       publishedAt: enriched?.publishedAt ?? "",
       pageUrl: tab.url ?? "",

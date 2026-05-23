@@ -424,3 +424,51 @@ for (const needle of ["data-byline-row", "data-published-row", 'data-field="auth
 }
 console.log("\u2713 byline smoke ok");
 
+// --- Code block detection ------------------------------------------------
+const { buildCodeFence } = globalThis.__qti;
+if (typeof buildCodeFence !== "function") { console.error("buildCodeFence missing"); process.exit(1); }
+if (buildCodeFence({ selectionText: "" }) !== "") { console.error("buildCodeFence empty"); process.exit(1); }
+const basicFence = buildCodeFence({ selectionText: "const x = 1;", codeLanguage: "js" });
+if (!basicFence.startsWith("```js\n") || !basicFence.endsWith("\n```")) { console.error("buildCodeFence basic bad:", basicFence); process.exit(1); }
+if (!basicFence.includes("const x = 1;")) { console.error("buildCodeFence missing body"); process.exit(1); }
+const noLang = buildCodeFence({ selectionText: "plain" });
+if (!noLang.startsWith("```\n")) { console.error("buildCodeFence no-lang bad:", noLang); process.exit(1); }
+// Language sanitized.
+const sanitized = buildCodeFence({ selectionText: "x", codeLanguage: "Java Script!! lol" });
+if (sanitized.startsWith("```javascript!! lol") || sanitized.includes(" ")) {
+  // The replacement strips spaces/!; ensure only [a-z0-9+#._-]
+}
+if (!/^```[a-z0-9+#._-]*\n/.test(sanitized)) { console.error("buildCodeFence sanitize bad:", sanitized); process.exit(1); }
+// Fence escape when content contains backticks.
+const nestedFence = buildCodeFence({ selectionText: "before ```` after", codeLanguage: "" });
+if (!nestedFence.startsWith("`````\n")) { console.error("buildCodeFence escape bad:", nestedFence); process.exit(1); }
+// Body integration.
+const bodyCode = buildMarkdownBody({
+  selectionText: "const x = 1;\nconsole.log(x);",
+  isCode: true, codeLanguage: "js",
+  pageTitle: "Doc", pageUrl: "https://e.com", capturedAt: "2026-05-23T10:00:00Z",
+});
+if (!bodyCode.includes("```js\nconst x = 1;\nconsole.log(x);\n```")) { console.error("body code fence missing:", bodyCode); process.exit(1); }
+if (bodyCode.includes("> const x = 1;")) { console.error("body should NOT blockquote code"); process.exit(1); }
+// When isCode is false we keep blockquote behavior.
+const bodyQuote = buildMarkdownBody({ selectionText: "hello", isCode: false, pageUrl: "https://e.com", capturedAt: "2026-05-23T10:00:00Z" });
+if (!bodyQuote.includes("> hello")) { console.error("non-code should still blockquote"); process.exit(1); }
+// Template placeholder quote_code.
+const rendCode = renderTemplate("X {{quote_code}} Y", { selectionText: "const x = 1;", isCode: true, codeLanguage: "js" });
+if (!rendCode.includes("```js\nconst x = 1;\n```")) { console.error("renderTemplate quote_code:", rendCode); process.exit(1); }
+const rendLang = renderTemplate("lang={{code_language}}", { selectionText: "x", codeLanguage: "ts" });
+if (rendLang !== "lang=ts") { console.error("renderTemplate code_language:", rendLang); process.exit(1); }
+// Background must declare same detection tokens.
+const swCode = fs.readFileSync("src/background.js", "utf8");
+for (const needle of ["isCode", "codeLanguage", "__qtiBuildCodeFence", "language-", "data-language", "PRE", "CODE"]) {
+  if (!swCode.includes(needle)) { console.error("background.js missing code-detection token:", needle); process.exit(1); }
+}
+// Bulk quotes should round-trip isCode + codeLanguage.
+const bulkCode = normalizeBulkQuotes([
+  { selectionText: "const x = 1;", pageUrl: "https://e.com", isCode: true, codeLanguage: "js" },
+]);
+if (bulkCode.length !== 1 || !bulkCode[0].isCode || bulkCode[0].codeLanguage !== "js") {
+  console.error("normalizeBulkQuotes lost code fields:", bulkCode); process.exit(1);
+}
+console.log("\u2713 code-block smoke ok");
+
