@@ -60,6 +60,9 @@ for (const needle of [
   'data-action="copy-shot"',
   'data-action="download-shot"',
   'data-field="shotImg"',
+  'data-action="toggle-recents"',
+  'data-field="repo-recents"',
+  'role="combobox"',
 ]) {
   if (!popupHtml.includes(needle)) { console.error("popup.html missing token:", needle); process.exit(1); }
 }
@@ -73,12 +76,17 @@ for (const needle of [
   "qti.formState",
   "buildFormNode",
   "deriveScreenshotFilename",
+  "normalizeRecentRepos",
+  "filterRecentRepos",
+  "addRecentRepo",
+  "removeRecentRepo",
+  "qti.recentRepos",
 ]) {
   if (!popupJs.includes(needle)) { console.error("popup.js missing token:", needle); process.exit(1); }
 }
 
 const popupCss = fs.readFileSync("src/popup.css", "utf8");
-for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn"]) {
+for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn", ".repo-recents", ".repo-recent"]) {
   if (!popupCss.includes(needle)) { console.error("popup.css missing token:", needle); process.exit(1); }
 }
 
@@ -86,7 +94,7 @@ for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".sh
 globalThis.document = { getElementById: () => null };
 globalThis.chrome = undefined;
 await import("../src/popup.js").catch((err) => { console.error("popup.js import failed:", err.message); process.exit(1); });
-const { parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename, formatBytes } = globalThis.__qti || {};
+const { parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename, formatBytes, normalizeRecentRepos, filterRecentRepos } = globalThis.__qti || {};
 if (typeof parseRepo !== "function") { console.error("popup helpers not exported on globalThis.__qti"); process.exit(1); }
 const goodRepo = parseRepo("vercel/next.js");
 if (!goodRepo.ok || goodRepo.owner !== "vercel" || goodRepo.name !== "next.js") { console.error("parseRepo bad: vercel/next.js"); process.exit(1); }
@@ -114,6 +122,27 @@ const shotName = deriveScreenshotFilename({ pageUrl: "https://Example.com/path?q
 if (!shotName.endsWith(".png") || !shotName.includes("example.com")) { console.error("deriveScreenshotFilename bad:", shotName); process.exit(1); }
 if (formatBytes(2048) !== "2 KB") { console.error("formatBytes(2048) bad:", formatBytes(2048)); process.exit(1); }
 if (formatBytes(0) !== "") { console.error("formatBytes(0) bad"); process.exit(1); }
+
+// Recent repos normalization + filter
+if (typeof normalizeRecentRepos !== "function") { console.error("normalizeRecentRepos missing"); process.exit(1); }
+const rawRecents = [
+  { value: "vercel/next.js", lastUsed: "2026-05-20T10:00:00Z" },
+  { value: "VERCEL/next.js", lastUsed: "2026-05-22T10:00:00Z" }, // dedupe (case-insensitive), newer should win after sort
+  { value: "facebook/react", lastUsed: "2026-05-21T10:00:00Z" },
+  { value: "bad-input", lastUsed: "2026-05-23T10:00:00Z" }, // dropped
+  { value: "", lastUsed: "2026-05-23T10:00:00Z" }, // dropped
+  null,
+];
+const normed = normalizeRecentRepos(rawRecents);
+if (normed.length !== 2) { console.error("normalizeRecentRepos length wrong:", normed); process.exit(1); }
+if (normed[0].value !== "VERCEL/next.js") { console.error("normalizeRecentRepos sort wrong:", normed); process.exit(1); }
+if (normed[1].value !== "facebook/react") { console.error("normalizeRecentRepos second wrong:", normed); process.exit(1); }
+const big = Array.from({ length: 20 }, (_, i) => ({ value: `owner/repo-${i}`, lastUsed: new Date(2026, 0, 1 + i).toISOString() }));
+if (normalizeRecentRepos(big).length !== 8) { console.error("normalizeRecentRepos should cap at 8"); process.exit(1); }
+if (normalizeRecentRepos("not-an-array").length !== 0) { console.error("normalizeRecentRepos non-array"); process.exit(1); }
+const filtered = filterRecentRepos(normed, "react");
+if (filtered.length !== 1 || filtered[0].value !== "facebook/react") { console.error("filterRecentRepos bad:", filtered); process.exit(1); }
+if (filterRecentRepos(normed, "").length !== 2) { console.error("filterRecentRepos empty query should return all"); process.exit(1); }
 const bodyShot = buildMarkdownBody({
   selectionText: "hi",
   pageTitle: "D", pageUrl: "https://e.com",

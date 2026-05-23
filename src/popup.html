@@ -68,12 +68,20 @@
 
       <div class="field">
         <label class="field-label" for="qti-repo">Repository</label>
-        <div class="input-wrap">
-          <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5v-17z"></path>
-            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-          </svg>
-          <input id="qti-repo" name="repo" class="input" type="text" placeholder="owner/name" autocomplete="off" spellcheck="false" data-field="repo">
+        <div class="repo-combo" data-field="repo-combo">
+          <div class="input-wrap">
+            <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5v-17z"></path>
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+            </svg>
+            <input id="qti-repo" name="repo" class="input" type="text" placeholder="owner/name" autocomplete="off" spellcheck="false" data-field="repo" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="qti-repo-recents">
+            <button class="input-btn repo-recents-toggle" type="button" data-action="toggle-recents" aria-label="Show recent repositories" aria-pressed="false" title="Recent repositories" hidden>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M6 9l6 6 6-6"></path>
+              </svg>
+            </button>
+          </div>
+          <div id="qti-repo-recents" class="repo-recents glass" data-field="repo-recents" role="listbox" hidden></div>
         </div>
         <p class="field-hint" data-field="repo-hint">e.g. <code>vercel/next.js</code></p>
       </div>

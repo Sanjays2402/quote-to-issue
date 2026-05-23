@@ -13,7 +13,10 @@ const LOG = "[quote-to-issue]";
 const STORAGE_KEYS = Object.freeze({
   pendingQuote: "qti.pendingQuote",
   formState: "qti.formState",
+  recentRepos: "qti.recentRepos",
 });
+
+const MAX_RECENT_REPOS = 8;
 
 const root = document.getElementById("root");
 const tplEmpty = document.getElementById("tpl-empty");
@@ -119,6 +122,68 @@ function deriveScreenshotFilename(q) {
   return `quote-${host}-${stamp}.png`;
 }
 
+/**
+ * Normalize an arbitrary stored list of recent repos into the canonical shape
+ * — `{ value: "owner/name", lastUsed: ISO }`, sorted newest-first, deduped on
+ * value (case-insensitive), trimmed to MAX_RECENT_REPOS.
+ */
+function normalizeRecentRepos(list) {
+  if (!Array.isArray(list)) return [];
+  const entries = [];
+  for (const raw of list) {
+    if (!raw) continue;
+    const value = String(raw.value || raw.repo || "").trim();
+    const parsed = parseRepo(value);
+    if (!parsed.ok) continue;
+    const lastUsed = typeof raw.lastUsed === "string" ? raw.lastUsed : (raw.lastUsed ? new Date(raw.lastUsed).toISOString() : "");
+    entries.push({ value: parsed.value, lastUsed });
+  }
+  entries.sort((a, b) => (Date.parse(b.lastUsed) || 0) - (Date.parse(a.lastUsed) || 0));
+  const seen = new Set();
+  const out = [];
+  for (const e of entries) {
+    const key = e.value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out.slice(0, MAX_RECENT_REPOS);
+}
+
+function filterRecentRepos(recents, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return recents.slice();
+  return recents.filter((r) => r.value.toLowerCase().includes(q));
+}
+
+async function getRecentRepos() {
+  if (!chrome?.storage?.local) return [];
+  const out = await chrome.storage.local.get(STORAGE_KEYS.recentRepos);
+  return normalizeRecentRepos(out[STORAGE_KEYS.recentRepos]);
+}
+
+async function setRecentRepos(list) {
+  if (!chrome?.storage?.local) return;
+  await chrome.storage.local.set({ [STORAGE_KEYS.recentRepos]: normalizeRecentRepos(list) });
+}
+
+async function addRecentRepo(value) {
+  const parsed = parseRepo(value);
+  if (!parsed.ok) return null;
+  const now = new Date().toISOString();
+  const current = await getRecentRepos();
+  const next = [{ value: parsed.value, lastUsed: now }, ...current.filter((r) => r.value.toLowerCase() !== parsed.value.toLowerCase())].slice(0, MAX_RECENT_REPOS);
+  await setRecentRepos(next);
+  return parsed.value;
+}
+
+async function removeRecentRepo(value) {
+  const v = String(value || "").toLowerCase();
+  if (!v) return;
+  const current = await getRecentRepos();
+  await setRecentRepos(current.filter((r) => r.value.toLowerCase() !== v));
+}
+
 async function dataUrlToBlob(dataUrl) {
   if (typeof fetch === "function") {
     const r = await fetch(dataUrl);
@@ -134,7 +199,7 @@ async function dataUrlToBlob(dataUrl) {
 
 // expose for tests
 if (typeof globalThis !== "undefined") {
-  globalThis.__qti = { parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename, formatBytes };
+  globalThis.__qti = { parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename, formatBytes, normalizeRecentRepos, filterRecentRepos };
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +336,110 @@ function buildFormNode(q, state) {
   const previewBody = node.querySelector('[data-field="preview-body"]');
   const toggleBtn = node.querySelector('[data-action="toggle-preview"]');
   const submitBtn = node.querySelector('[data-action="submit"]');
+  const recentsBtn = node.querySelector('[data-action="toggle-recents"]');
+  const recentsPanel = node.querySelector('[data-field="repo-recents"]');
+
+  // Recent repos dropdown state (cached and re-rendered on demand).
+  let recents = [];
+  let recentsOpen = false;
+  let activeRecentIndex = -1;
+
+  function renderRecentsList() {
+    if (!recentsPanel) return;
+    recentsPanel.replaceChildren();
+    const filtered = filterRecentRepos(recents, repoInput.value);
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "repo-recents-empty";
+      empty.textContent = recents.length === 0 ? "No recent repositories yet." : "No matches.";
+      recentsPanel.appendChild(empty);
+      activeRecentIndex = -1;
+      return;
+    }
+    const label = document.createElement("div");
+    label.className = "recents-label";
+    label.textContent = "Recent";
+    recentsPanel.appendChild(label);
+    filtered.forEach((entry, idx) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "repo-recent";
+      row.setAttribute("role", "option");
+      row.setAttribute("data-value", entry.value);
+      if (idx === activeRecentIndex) row.setAttribute("aria-selected", "true");
+      row.innerHTML = `
+        <svg class="repo-recent-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M12 7v5l3 2"></path>
+        </svg>
+        <span class="repo-recent-value"></span>
+        <span class="repo-recent-time"></span>
+        <span class="repo-recent-remove" role="button" tabindex="0" aria-label="Remove" title="Remove">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+          </svg>
+        </span>`;
+      row.querySelector(".repo-recent-value").textContent = entry.value;
+      row.querySelector(".repo-recent-time").textContent = entry.lastUsed ? fmtRelative(entry.lastUsed) : "";
+      row.addEventListener("mousedown", (e) => {
+        // Avoid mousedown stealing focus before we react to click.
+        if (e.target.closest(".repo-recent-remove")) return;
+        e.preventDefault();
+      });
+      row.addEventListener("click", (e) => {
+        if (e.target.closest(".repo-recent-remove")) {
+          e.stopPropagation();
+          e.preventDefault();
+          removeRecentRepo(entry.value).then(refreshRecents);
+          return;
+        }
+        chooseRecent(entry.value);
+      });
+      const removeEl = row.querySelector(".repo-recent-remove");
+      removeEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault(); e.stopPropagation();
+          removeRecentRepo(entry.value).then(refreshRecents);
+        }
+      });
+      recentsPanel.appendChild(row);
+    });
+  }
+
+  function openRecents() {
+    if (!recentsPanel) return;
+    if (recents.length === 0) return;
+    recentsOpen = true;
+    recentsPanel.hidden = false;
+    repoInput.setAttribute("aria-expanded", "true");
+    recentsBtn?.setAttribute("aria-pressed", "true");
+    renderRecentsList();
+  }
+
+  function closeRecents() {
+    if (!recentsPanel) return;
+    recentsOpen = false;
+    recentsPanel.hidden = true;
+    repoInput.setAttribute("aria-expanded", "false");
+    recentsBtn?.setAttribute("aria-pressed", "false");
+    activeRecentIndex = -1;
+  }
+
+  function chooseRecent(value) {
+    repoInput.value = value;
+    saveFormState({ repo: value });
+    validateRepo();
+    closeRecents();
+    refreshSubmitState();
+    titleInput.focus();
+  }
+
+  async function refreshRecents() {
+    recents = await getRecentRepos().catch(() => []);
+    if (recentsBtn) recentsBtn.hidden = recents.length === 0;
+    if (recents.length === 0) closeRecents();
+    else if (recentsOpen) renderRecentsList();
+  }
 
   repoInput.value = state.repo || "";
   titleInput.value = state.title || deriveTitle(q);
@@ -299,6 +468,51 @@ function buildFormNode(q, state) {
   repoInput.addEventListener("input", () => {
     validateRepo();
     saveFormState({ repo: repoInput.value });
+    activeRecentIndex = -1;
+    if (recentsOpen) renderRecentsList();
+    else if (recents.length > 0 && document.activeElement === repoInput) openRecents();
+  });
+  repoInput.addEventListener("focus", () => {
+    if (recents.length > 0) openRecents();
+  });
+  repoInput.addEventListener("blur", () => {
+    // Delay so click handlers on recents can fire.
+    setTimeout(() => {
+      if (document.activeElement !== repoInput && !recentsPanel?.contains(document.activeElement)) {
+        closeRecents();
+      }
+    }, 120);
+  });
+  repoInput.addEventListener("keydown", (e) => {
+    if (!recentsOpen && (e.key === "ArrowDown" || e.key === "Down")) {
+      if (recents.length > 0) { e.preventDefault(); openRecents(); activeRecentIndex = 0; renderRecentsList(); }
+      return;
+    }
+    if (!recentsOpen) return;
+    const rows = recentsPanel?.querySelectorAll(".repo-recent") || [];
+    if (e.key === "ArrowDown" || e.key === "Down") {
+      e.preventDefault();
+      activeRecentIndex = rows.length === 0 ? -1 : (activeRecentIndex + 1) % rows.length;
+      renderRecentsList();
+    } else if (e.key === "ArrowUp" || e.key === "Up") {
+      e.preventDefault();
+      activeRecentIndex = rows.length === 0 ? -1 : (activeRecentIndex - 1 + rows.length) % rows.length;
+      renderRecentsList();
+    } else if (e.key === "Enter") {
+      if (activeRecentIndex >= 0 && rows[activeRecentIndex]) {
+        e.preventDefault();
+        const v = rows[activeRecentIndex].getAttribute("data-value");
+        if (v) chooseRecent(v);
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      closeRecents();
+    }
+  });
+  recentsBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (recentsOpen) closeRecents();
+    else { repoInput.focus(); openRecents(); }
   });
   titleInput.addEventListener("input", () => saveFormState({ title: titleInput.value }));
   labelsInput.addEventListener("input", () => {
@@ -349,6 +563,7 @@ function buildFormNode(q, state) {
       });
       if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
       const created = reply.result || {};
+      await addRecentRepo(repo.value).catch(() => {});
       await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);
       await saveFormState({ title: "" });
       renderSuccess({ repo: repo.value, ...created });
@@ -383,6 +598,9 @@ function buildFormNode(q, state) {
   };
   repoInput.addEventListener("input", refreshSubmitState);
   titleInput.addEventListener("input", refreshSubmitState);
+
+  // Kick off the recents fetch — reveals the toggle and primes the dropdown.
+  refreshRecents();
 
   return node;
 }
