@@ -19,7 +19,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Auto-link source URL with line/paragraph anchor
 - [x] Keyboard shortcut to file issue without opening popup
 - [x] Quick-repo switcher with fuzzy search in popup
-- [ ] Issue title auto-suggestion from selection (first sentence, smart truncate)
+- [x] Issue title auto-suggestion from selection (first sentence, smart truncate)
 - [ ] Surrounding-context capture (N chars before/after selection) toggle
 - [ ] Author/byline + publish date scraping for news/blog pages
 - [ ] Code block detection: wrap selections from <pre>/<code> as fenced markdown

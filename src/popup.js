@@ -140,11 +140,68 @@ function parseLabels(input) {
     .slice(0, 12);
 }
 
+// Common abbreviations that end in '.' but do NOT end a sentence. Used to
+// avoid false splits when extracting the first sentence from a selection.
+const SENTENCE_ABBREVIATIONS = new Set([
+  "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "mt",
+  "vs", "etc", "eg", "ie", "approx", "inc", "ltd", "co", "corp",
+  "e.g", "i.e", "u.s", "u.k", "e.u", "a.m", "p.m",
+  "no", "vol", "fig", "figs", "ch", "sec", "pp",
+]);
+
+/**
+ * Extract the first sentence from a block of selection text. Walks the
+ * string char-by-char so we can distinguish real sentence terminators from
+ * abbreviation dots ("Mr.", "e.g.", "U.S.") and decimal points ("3.14").
+ * Returns the trimmed first sentence WITHOUT trailing terminator punctuation,
+ * or the whole input if no boundary was found.
+ */
+function firstSentence(text) {
+  const s = String(text || "").trim();
+  if (!s) return "";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch !== "." && ch !== "!" && ch !== "?") continue;
+    const next = s[i + 1];
+    // Need whitespace or end-of-string after the terminator. (Quotes/parens
+    // that follow are folded into the sentence — common for blockquotes.)
+    const isBoundary = !next || /\s/.test(next);
+    if (!isBoundary) continue;
+    // Decimal: digit.digit (3.14) — not a sentence end.
+    if (ch === "." && /\d/.test(s[i - 1] || "") && /\d/.test(next || "")) continue;
+    if (ch === ".") {
+      // Pull the preceding token to check against the abbreviation list.
+      let j = i - 1;
+      while (j >= 0 && /[A-Za-z.]/.test(s[j])) j--;
+      const token = s.slice(j + 1, i).toLowerCase().replace(/\.$/, "");
+      if (token && SENTENCE_ABBREVIATIONS.has(token)) continue;
+      // Single-letter capital initials: "J. R. R. Tolkien" — skip.
+      if (token.length === 1 && /[a-z]/.test(token) && /[A-Z]/.test(s[i - 1] || "")) continue;
+    }
+    return s.slice(0, i).trim();
+  }
+  return s;
+}
+
+/**
+ * Smart-truncate to the last whole word before `max` chars, appending an
+ * ellipsis when truncation occurred. Returns the input unchanged when it
+ * already fits. Single-word overflow falls back to a hard slice.
+ */
+function smartTruncate(text, max) {
+  const s = String(text || "");
+  if (s.length <= max) return s;
+  const head = s.slice(0, max - 1);
+  const cut = head.replace(/\s+\S*$/, "");
+  return (cut || head) + "\u2026";
+}
+
 function deriveTitle(q) {
-  const t = (q?.selectionText || "").trim().replace(/\s+/g, " ");
+  const t = String(q?.selectionText || "").replace(/\s+/g, " ").trim();
   if (!t) return q?.pageTitle ? `Quote from: ${q.pageTitle}` : "";
   const max = 72;
-  const trimmed = t.length > max ? t.slice(0, max - 1).replace(/\s+\S*$/, "") + "…" : t;
+  const sentence = firstSentence(t) || t;
+  const trimmed = smartTruncate(sentence, max);
   return `Quote: ${trimmed}`;
 }
 
@@ -719,7 +776,7 @@ async function dataUrlToBlob(dataUrl) {
 // expose for tests
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
-    parseRepo, parseLabels, deriveTitle, buildMarkdownBody, buildSourceUrlWithAnchor, deriveScreenshotFilename,
+    parseRepo, parseLabels, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildSourceUrlWithAnchor, deriveScreenshotFilename,
     formatBytes, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeDrafts, MAX_DRAFTS,

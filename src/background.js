@@ -43,12 +43,44 @@ function __qtiHostnameOf(u) {
   try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; }
 }
 
+const __QTI_ABBR = new Set([
+  "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "mt",
+  "vs", "etc", "eg", "ie", "approx", "inc", "ltd", "co", "corp",
+  "e.g", "i.e", "u.s", "u.k", "e.u", "a.m", "p.m",
+  "no", "vol", "fig", "figs", "ch", "sec", "pp",
+]);
+
+function __qtiFirstSentence(text) {
+  const s = String(text || "").trim();
+  if (!s) return "";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch !== "." && ch !== "!" && ch !== "?") continue;
+    const next = s[i + 1];
+    const isBoundary = !next || /\s/.test(next);
+    if (!isBoundary) continue;
+    if (ch === "." && /\d/.test(s[i - 1] || "") && /\d/.test(next || "")) continue;
+    if (ch === ".") {
+      let j = i - 1;
+      while (j >= 0 && /[A-Za-z.]/.test(s[j])) j--;
+      const token = s.slice(j + 1, i).toLowerCase().replace(/\.$/, "");
+      if (token && __QTI_ABBR.has(token)) continue;
+      if (token.length === 1 && /[a-z]/.test(token) && /[A-Z]/.test(s[i - 1] || "")) continue;
+    }
+    return s.slice(0, i).trim();
+  }
+  return s;
+}
+
 function __qtiDeriveTitle(q) {
-  const t = String(q?.selectionText || "").trim().replace(/\s+/g, " ");
+  const t = String(q?.selectionText || "").replace(/\s+/g, " ").trim();
   if (!t) return q?.pageTitle ? `Quote from: ${q.pageTitle}` : "";
   const max = 72;
-  const trimmed = t.length > max ? t.slice(0, max - 1).replace(/\s+\S*$/, "") + "\u2026" : t;
-  return `Quote: ${trimmed}`;
+  const sentence = __qtiFirstSentence(t) || t;
+  if (sentence.length <= max) return `Quote: ${sentence}`;
+  const head = sentence.slice(0, max - 1);
+  const cut = head.replace(/\s+\S*$/, "") || head;
+  return `Quote: ${cut}\u2026`;
 }
 
 function __qtiBuildSourceUrlAnchor(q) {
