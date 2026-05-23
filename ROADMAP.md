@@ -14,6 +14,6 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Draft mode: save locally before posting
 - [x] Bulk-file from multiple selections on one page
 - [x] Liquid-glass popup UI
-- [ ] Dark/light theme
+- [x] Dark/light theme
 - [ ] Markdown preview pane
 - [ ] Auto-link source URL with line/paragraph anchor

@@ -204,6 +204,22 @@ body[data-theme="light"] .glass::before { mix-blend-mode: normal; opacity: 0.55;
 .icon-btn.ghost { background: transparent; border-color: transparent; }
 .icon-btn.ghost:hover { background: var(--glass-strong); border-color: var(--hairline); }
 
+.topbar-actions { display: inline-flex; align-items: center; gap: 8px; }
+.theme-btn { position: relative; }
+.theme-btn .theme-icon { width: 16px; height: 16px; transition: opacity 200ms var(--ease), transform 240ms var(--ease); }
+.theme-btn .theme-icon-light,
+.theme-btn .theme-icon-dark { display: none; }
+.theme-btn[data-theme-mode="system"] .theme-icon-system { display: block; }
+.theme-btn[data-theme-mode="light"] .theme-icon-light { display: block; }
+.theme-btn[data-theme-mode="dark"] .theme-icon-dark { display: block; }
+.theme-btn[data-theme-mode="system"] .theme-icon-system,
+.theme-btn[data-theme-mode="light"] .theme-icon-light,
+.theme-btn[data-theme-mode="dark"] .theme-icon-dark { animation: themeIconPop 240ms var(--ease); }
+@keyframes themeIconPop {
+  0% { opacity: 0; transform: rotate(-12deg) scale(0.85); }
+  100% { opacity: 1; transform: rotate(0) scale(1); }
+}
+
 .content {
   position: relative;
   z-index: 1;

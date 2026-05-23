@@ -43,6 +43,61 @@ const tplBulkRow = document.getElementById("tpl-bulk-row");
 
 let settingsOpen = false;
 
+// --- Theme toggle (dark/light/system) ----------------------------------
+const THEME_MODES = ["system", "light", "dark"];
+const THEME_LABELS = { system: "follow system", light: "light", dark: "dark" };
+const THEME_STORAGE_KEY = "qti.themeMode";
+let themeMode = "system";
+let themeMediaQuery = null;
+
+function resolveTheme(mode) {
+  if (mode === "light" || mode === "dark") return mode;
+  try {
+    if (typeof window !== "undefined" && window.matchMedia) {
+      return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+  } catch {}
+  return "dark";
+}
+
+function applyTheme(mode) {
+  const resolved = resolveTheme(mode);
+  if (document?.body) document.body.dataset.theme = resolved;
+  const btn = document.getElementById("theme-btn");
+  if (btn) {
+    btn.dataset.themeMode = mode;
+    const label = `Theme: ${THEME_LABELS[mode] || mode}`;
+    btn.setAttribute("title", label);
+    btn.setAttribute("aria-label", label);
+  }
+}
+
+async function initTheme() {
+  try {
+    const out = await chrome?.storage?.local?.get?.(THEME_STORAGE_KEY);
+    const stored = out?.[THEME_STORAGE_KEY];
+    if (THEME_MODES.includes(stored)) themeMode = stored;
+  } catch {}
+  applyTheme(themeMode);
+  try {
+    if (typeof window !== "undefined" && window.matchMedia) {
+      themeMediaQuery = window.matchMedia("(prefers-color-scheme: light)");
+      const onChange = () => { if (themeMode === "system") applyTheme("system"); };
+      themeMediaQuery.addEventListener?.("change", onChange);
+    }
+  } catch {}
+  document.getElementById("theme-btn")?.addEventListener("click", async () => {
+    const i = THEME_MODES.indexOf(themeMode);
+    themeMode = THEME_MODES[(i + 1) % THEME_MODES.length];
+    applyTheme(themeMode);
+    try { await chrome?.storage?.local?.set?.({ [THEME_STORAGE_KEY]: themeMode }); } catch {}
+  });
+}
+
+if (typeof document !== "undefined" && document.getElementById?.("theme-btn")) {
+  initTheme();
+}
+
 document.getElementById("settings-btn")?.addEventListener("click", () => {
   settingsOpen = !settingsOpen;
   if (settingsOpen) renderSettings();
