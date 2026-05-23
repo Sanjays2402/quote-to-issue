@@ -23,6 +23,13 @@ for (const needle of [
   "chrome.contextMenus",
   "contexts: [\"selection\"]",
   "File as GitHub issue",
+  "Add to issue batch",
+  "qti.addToBatch",
+  "bulkQuotes",
+  "getBulkQuotes",
+  "clearBulkQuotes",
+  "removeBulkQuote",
+  "setBadgeText",
   "chrome.scripting",
   "captureSelectionFromTab",
   "contextBefore",
@@ -77,6 +84,15 @@ for (const needle of [
   'data-drafts-list',
   'data-action="load-draft"',
   'data-action="delete-draft"',
+  'tpl-bulk',
+  'tpl-bulk-row',
+  'data-bulk-list',
+  'data-action="file-bulk"',
+  'data-action="clear-bulk"',
+  'data-action="remove-bulk"',
+  'data-field="bulk-repo"',
+  'data-field="bulk-labels"',
+  'data-field="bulk-progress"',
 ]) {
   if (!popupHtml.includes(needle)) { console.error("popup.html missing token:", needle); process.exit(1); }
 }
@@ -107,12 +123,18 @@ for (const needle of [
   "saveDraft",
   "deleteDraft",
   "qti.drafts",
+  "normalizeBulkQuotes",
+  "removeBulkQuote",
+  "clearBulkQuotes",
+  "appendBulkSection",
+  "qti.bulkQuotes",
+  "MAX_BULK_QUOTES",
 ]) {
   if (!popupJs.includes(needle)) { console.error("popup.js missing token:", needle); process.exit(1); }
 }
 
 const popupCss = fs.readFileSync("src/popup.css", "utf8");
-for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn", ".repo-recents", ".repo-recent", ".template-body", ".template-block", ".template-actions", ".drafts", ".draft-row", ".draft-load", ".draft-remove", ".draft-status"]) {
+for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn", ".repo-recents", ".repo-recent", ".template-body", ".template-block", ".template-actions", ".drafts", ".draft-row", ".draft-load", ".draft-remove", ".draft-status", ".bulk ", ".bulk-row", ".bulk-list", ".bulk-row-status", ".bulk-progress", ".bulk-row-remove"]) {
   if (!popupCss.includes(needle)) { console.error("popup.css missing token:", needle); process.exit(1); }
 }
 
@@ -228,6 +250,26 @@ const longBody = "x".repeat(50_000);
 const clipped = normalizeDrafts([{ id: "big", title: "t", body: longBody, updatedAt: "2026-05-23T10:00:00Z" }]);
 if (clipped[0].body.length > 32_000) { console.error("normalizeDrafts should clip body"); process.exit(1); }
 console.log("\u2713 drafts smoke ok");
+
+// --- Bulk batch -----------------------------------------------------------
+const { normalizeBulkQuotes, MAX_BULK_QUOTES } = globalThis.__qti;
+if (typeof normalizeBulkQuotes !== "function") { console.error("normalizeBulkQuotes missing"); process.exit(1); }
+if (typeof MAX_BULK_QUOTES !== "number" || MAX_BULK_QUOTES < 5) { console.error("MAX_BULK_QUOTES invalid"); process.exit(1); }
+if (normalizeBulkQuotes(null).length !== 0) { console.error("normalizeBulkQuotes(null) should be []"); process.exit(1); }
+const bulkIn = [
+  { id: "q1", selectionText: "first selection", pageUrl: "https://a.com/p", capturedAt: "2026-05-23T10:00:00Z" },
+  { id: "q2", selectionText: "  ", pageUrl: "https://a.com/p" }, // dropped (empty)
+  { id: "q3", selectionText: "first selection", pageUrl: "https://a.com/p" }, // dedupe via fingerprint
+  { id: "q4", selectionText: "different", pageUrl: "https://b.com" },
+  { selectionText: "no-id is fine", pageUrl: "https://c.com" },
+];
+const bulkOut = normalizeBulkQuotes(bulkIn);
+if (bulkOut.length !== 3) { console.error("normalizeBulkQuotes length wrong:", bulkOut.map((q) => q.selectionText)); process.exit(1); }
+if (bulkOut[0].id !== "q1") { console.error("normalizeBulkQuotes order wrong:", bulkOut); process.exit(1); }
+if (!bulkOut[2].id?.startsWith("b_")) { console.error("normalizeBulkQuotes generated id missing"); process.exit(1); }
+const tooMany = Array.from({ length: MAX_BULK_QUOTES + 5 }, (_, i) => ({ selectionText: `sel-${i}`, pageUrl: `https://x.com/${i}` }));
+if (normalizeBulkQuotes(tooMany).length !== MAX_BULK_QUOTES) { console.error("normalizeBulkQuotes cap wrong"); process.exit(1); }
+console.log("\u2713 bulk smoke ok");
 
 // --- Token storage (encrypted PAT) ----------------------------------------
 await import("../src/token.js").catch((err) => { console.error("token.js import failed:", err.message); process.exit(1); });

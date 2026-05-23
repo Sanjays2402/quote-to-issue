@@ -16,7 +16,11 @@ const STORAGE_KEYS = Object.freeze({
   recentRepos: "qti.recentRepos",
   repoTemplates: "qti.repoTemplates",
   drafts: "qti.drafts",
+  bulkQuotes: "qti.bulkQuotes",
+  bulkState: "qti.bulkState",
 });
+
+const MAX_BULK_QUOTES = 20;
 
 const MAX_DRAFTS = 25;
 const MAX_DRAFT_BODY_LEN = 32_000;
@@ -34,6 +38,8 @@ const tplSettings = document.getElementById("tpl-settings");
 const tplSuccess = document.getElementById("tpl-success");
 const tplDrafts = document.getElementById("tpl-drafts");
 const tplDraftRow = document.getElementById("tpl-draft-row");
+const tplBulk = document.getElementById("tpl-bulk");
+const tplBulkRow = document.getElementById("tpl-bulk-row");
 
 let settingsOpen = false;
 
@@ -319,6 +325,73 @@ async function deleteDraft(id) {
   await chrome.storage.local.set({ [STORAGE_KEYS.drafts]: cur.filter((d) => d.id !== id) });
 }
 
+// ---------------------------------------------------------------------------
+// Bulk batch — file many selections against one repo in a single popup pass
+// ---------------------------------------------------------------------------
+
+function normalizeBulkQuotes(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const selectionText = String(raw.selectionText || "").slice(0, 16_000);
+    if (!selectionText.trim()) continue;
+    const pageUrl = String(raw.pageUrl || "").slice(0, 2048);
+    const fp = `${pageUrl}::${selectionText.replace(/\s+/g, " ").trim().slice(0, 200)}`;
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    const id = typeof raw.id === "string" && raw.id ? raw.id : `b_${Date.now().toString(36)}_${out.length}`;
+    out.push({
+      id,
+      selectionText,
+      contextBefore: String(raw.contextBefore || "").slice(0, 4000),
+      contextAfter: String(raw.contextAfter || "").slice(0, 4000),
+      nearestHeading: String(raw.nearestHeading || "").slice(0, 256),
+      pageUrl,
+      pageTitle: String(raw.pageTitle || "").slice(0, 512),
+      screenshot: raw.screenshot && typeof raw.screenshot === "object" ? raw.screenshot : null,
+      capturedAt: typeof raw.capturedAt === "string" ? raw.capturedAt : new Date().toISOString(),
+    });
+    if (out.length >= MAX_BULK_QUOTES) break;
+  }
+  return out;
+}
+
+async function getBulkQuotes() {
+  if (!chrome?.storage?.local) return [];
+  const out = await chrome.storage.local.get(STORAGE_KEYS.bulkQuotes);
+  return normalizeBulkQuotes(out[STORAGE_KEYS.bulkQuotes]);
+}
+
+async function setBulkQuotes(list) {
+  if (!chrome?.storage?.local) return;
+  await chrome.storage.local.set({ [STORAGE_KEYS.bulkQuotes]: normalizeBulkQuotes(list) });
+}
+
+async function removeBulkQuote(id) {
+  if (!id) return;
+  const cur = await getBulkQuotes();
+  await setBulkQuotes(cur.filter((q) => q.id !== id));
+}
+
+async function clearBulkQuotes() {
+  if (!chrome?.storage?.local) return;
+  await chrome.storage.local.remove(STORAGE_KEYS.bulkQuotes);
+}
+
+async function loadBulkState() {
+  if (!chrome?.storage?.local) return {};
+  const out = await chrome.storage.local.get(STORAGE_KEYS.bulkState);
+  return out[STORAGE_KEYS.bulkState] || {};
+}
+
+async function saveBulkState(patch) {
+  if (!chrome?.storage?.local) return;
+  const prev = await loadBulkState();
+  await chrome.storage.local.set({ [STORAGE_KEYS.bulkState]: { ...prev, ...patch } });
+}
+
 async function getRecentRepos() {
   if (!chrome?.storage?.local) return [];
   const out = await chrome.storage.local.get(STORAGE_KEYS.recentRepos);
@@ -367,6 +440,7 @@ if (typeof globalThis !== "undefined") {
     formatBytes, normalizeRecentRepos, filterRecentRepos,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeDrafts, MAX_DRAFTS,
+    normalizeBulkQuotes, MAX_BULK_QUOTES,
   };
 }
 
@@ -1158,10 +1232,189 @@ async function loadPending() {
   const q = out[STORAGE_KEYS.pendingQuote];
   if (q && q.selectionText) renderQuote(q);
   else renderEmpty();
+  await appendBulkSection();
+}
+
+async function appendBulkSection() {
+  if (!tplBulk || !tplBulkRow) return;
+  // Remove any prior bulk section before appending fresh.
+  for (const existing of root.querySelectorAll("[data-bulk]")) existing.remove();
+  const quotes = await getBulkQuotes().catch(() => []);
+  if (quotes.length === 0) return;
+  const state = await loadBulkState().catch(() => ({}));
+  const node = tplBulk.content.cloneNode(true);
+  const section = node.querySelector("[data-bulk]");
+  const list = node.querySelector("[data-bulk-list]");
+  const countEl = node.querySelector('[data-field="bulk-count"]');
+  const repoInput = node.querySelector('[data-field="bulk-repo"]');
+  const repoHint = node.querySelector('[data-field="bulk-repo-hint"]');
+  const labelsInput = node.querySelector('[data-field="bulk-labels"]');
+  const fileBtn = node.querySelector('[data-action="file-bulk"]');
+  const fileLabel = node.querySelector('[data-field="bulk-submit-label"]');
+  const clearBtn = node.querySelector('[data-action="clear-bulk"]');
+  const progressBox = node.querySelector('[data-field="bulk-progress"]');
+  const progressFill = node.querySelector('[data-field="bulk-progress-fill"]');
+  const progressLabel = node.querySelector('[data-field="bulk-progress-label"]');
+  const errorEl = node.querySelector('[data-field="bulk-error"]');
+  const hintEl = node.querySelector('[data-field="bulk-hint"]');
+
+  countEl.textContent = `${quotes.length} queued`;
+  repoInput.value = state.repo || "";
+  labelsInput.value = state.labels || "";
+  fileLabel.textContent = quotes.length === 1 ? "File 1 issue" : `File ${quotes.length} issues`;
+
+  const rowEls = new Map();
+  for (const q of quotes) {
+    const rowFrag = tplBulkRow.content.cloneNode(true);
+    const li = rowFrag.querySelector(".bulk-row");
+    li.dataset.id = q.id;
+    const hostEl = rowFrag.querySelector('[data-field="bulk-row-host"]');
+    const sectionEl = rowFrag.querySelector('[data-field="bulk-row-section"]');
+    const snipEl = rowFrag.querySelector('[data-field="bulk-row-snippet"]');
+    hostEl.textContent = hostnameOf(q.pageUrl) || "(unknown)";
+    sectionEl.textContent = q.nearestHeading ? `· ${q.nearestHeading}` : "";
+    snipEl.textContent = (q.selectionText || "").replace(/\s+/g, " ").trim().slice(0, 200);
+    rowFrag.querySelector('[data-action="remove-bulk"]').addEventListener("click", async (e) => {
+      e.preventDefault();
+      await removeBulkQuote(q.id);
+      loadPending();
+    });
+    list.appendChild(rowFrag);
+    rowEls.set(q.id, li);
+  }
+
+  function validate() {
+    const r = parseRepo(repoInput.value);
+    if (!repoInput.value.trim()) {
+      repoHint.textContent = "All selected quotes will be filed against this repo.";
+      repoHint.classList.remove("error");
+    } else if (!r.ok) {
+      repoHint.textContent = r.error || "Use the form owner/name";
+      repoHint.classList.add("error");
+    } else {
+      repoHint.textContent = `Will file ${quotes.length} issues at github.com/${r.value}`;
+      repoHint.classList.remove("error");
+    }
+    return r.ok;
+  }
+
+  async function refreshFileBtn() {
+    const has = await hasToken().catch(() => false);
+    fileBtn.disabled = !(has && validate());
+    if (!has) hintEl.textContent = "Add a GitHub token in settings first.";
+    else hintEl.innerHTML = 'Right-click selections and choose <em>Add to issue batch</em> to queue more.';
+  }
+
+  validate();
+  refreshFileBtn();
+
+  repoInput.addEventListener("input", () => {
+    saveBulkState({ repo: repoInput.value });
+    refreshFileBtn();
+  });
+  labelsInput.addEventListener("input", () => saveBulkState({ labels: labelsInput.value }));
+
+  clearBtn.addEventListener("click", async () => {
+    await clearBulkQuotes();
+    loadPending();
+  });
+
+  function setRowState(id, state, detail) {
+    const li = rowEls.get(id);
+    if (!li) return;
+    const wrap = li.querySelector('[data-field="bulk-row-status"]');
+    wrap.dataset.state = state;
+    const link = li.querySelector('[data-field="bulk-row-link"]');
+    let icon = '';
+    if (state === "in-progress") {
+      icon = '<svg class="bulk-row-icon spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" opacity="0.25"></circle><path d="M21 12a9 9 0 0 0-9-9"></path></svg>';
+    } else if (state === "done") {
+      icon = '<svg class="bulk-row-icon ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M8 12.5l2.5 2.5L16 9.5"></path></svg>';
+    } else if (state === "failed") {
+      icon = '<svg class="bulk-row-icon err" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M9 9l6 6"></path><path d="M15 9l-6 6"></path></svg>';
+    } else {
+      icon = '<svg class="bulk-row-icon pending" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle></svg>';
+    }
+    wrap.innerHTML = icon;
+    if (state === "done" && detail?.htmlUrl) {
+      link.hidden = false;
+      link.href = detail.htmlUrl;
+      link.textContent = `#${detail.number ?? "open"}`;
+    } else if (state === "failed" && detail?.error) {
+      link.hidden = false;
+      link.removeAttribute("href");
+      link.classList.add("err");
+      link.textContent = detail.error;
+    }
+  }
+
+  fileBtn.addEventListener("click", async () => {
+    if (fileBtn.disabled) return;
+    const repo = parseRepo(repoInput.value);
+    if (!repo.ok) return;
+    fileBtn.disabled = true;
+    fileBtn.classList.add("loading");
+    clearBtn.disabled = true;
+    repoInput.disabled = true;
+    labelsInput.disabled = true;
+    errorEl.hidden = true;
+    progressBox.hidden = false;
+    const labels = parseLabels(labelsInput.value);
+    const total = quotes.length;
+    let done = 0;
+    let failed = 0;
+    const tmpl = await getRepoTemplate(repo.value).catch(() => null);
+    progressLabel.textContent = `0 / ${total}`;
+    progressFill.style.width = "0%";
+    for (const q of quotes) {
+      setRowState(q.id, "in-progress");
+      const title = deriveTitle(q) || `Quote from: ${hostnameOf(q.pageUrl) || "page"}`;
+      const body = tmpl?.body ? renderTemplate(tmpl.body, q) : buildMarkdownBody(q);
+      try {
+        const reply = await chrome.runtime.sendMessage({
+          type: "submitIssue",
+          repo: repo.value,
+          title,
+          body,
+          labels,
+        });
+        if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
+        const created = reply.result || {};
+        setRowState(q.id, "done", created);
+        // Remove the successfully filed quote from storage so partial failure
+        // leaves only the unfiled ones for retry.
+        await removeBulkQuote(q.id).catch(() => {});
+        done += 1;
+      } catch (err) {
+        setRowState(q.id, "failed", { error: String(err?.message || err) });
+        failed += 1;
+      }
+      const pct = Math.round(((done + failed) / total) * 100);
+      progressFill.style.width = `${pct}%`;
+      progressLabel.textContent = `${done + failed} / ${total}${failed ? ` · ${failed} failed` : ""}`;
+    }
+    await addRecentRepo(repo.value).catch(() => {});
+    fileBtn.classList.remove("loading");
+    clearBtn.disabled = false;
+    repoInput.disabled = false;
+    labelsInput.disabled = false;
+    if (failed === 0) {
+      // All filed — reset the queue and the badge.
+      await clearBulkQuotes();
+      hintEl.textContent = `All ${total} issues filed.`;
+      setTimeout(() => loadPending(), 1400);
+    } else {
+      errorEl.hidden = false;
+      errorEl.textContent = `${failed} issue${failed === 1 ? "" : "s"} failed. Filed quotes were removed from the batch; retry to refile the rest.`;
+      fileBtn.disabled = false;
+    }
+  });
+
+  root.appendChild(section);
 }
 
 chrome?.storage?.onChanged?.addListener((changes, area) => {
-  if (area === "local" && changes[STORAGE_KEYS.pendingQuote]) loadPending();
+  if (area === "local" && (changes[STORAGE_KEYS.pendingQuote] || changes[STORAGE_KEYS.bulkQuotes])) loadPending();
 });
 if (root) loadPending();
 

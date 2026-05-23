@@ -167,6 +167,89 @@
     </section>
   </template>
 
+  <template id="tpl-bulk">
+    <section class="bulk glass" data-bulk>
+      <header class="bulk-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="13" height="13" rx="2"></rect>
+            <rect x="8" y="9" width="13" height="13" rx="2"></rect>
+          </svg>
+          <span class="meta-label">Issue batch</span>
+          <span class="bulk-count" data-field="bulk-count"></span>
+        </div>
+        <button class="icon-btn ghost" type="button" data-action="clear-bulk" title="Clear batch" aria-label="Clear batch">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path>
+          </svg>
+        </button>
+      </header>
+
+      <ul class="bulk-list" data-bulk-list role="list"></ul>
+
+      <div class="field">
+        <label class="field-label" for="qti-bulk-repo">Repository (for all)</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5v-17z"></path>
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+          </svg>
+          <input id="qti-bulk-repo" name="bulk-repo" class="input" type="text" placeholder="owner/name" autocomplete="off" spellcheck="false" data-field="bulk-repo">
+        </div>
+        <p class="field-hint" data-field="bulk-repo-hint">All selected quotes will be filed against this repo.</p>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="qti-bulk-labels">Labels</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12l9-9 9 9-9 9-9-9z"></path>
+            <circle cx="9" cy="9" r="1.5"></circle>
+          </svg>
+          <input id="qti-bulk-labels" name="bulk-labels" class="input" type="text" placeholder="bug, docs" autocomplete="off" spellcheck="false" data-field="bulk-labels">
+        </div>
+      </div>
+
+      <div class="bulk-progress" data-field="bulk-progress" hidden>
+        <div class="bulk-progress-bar"><span class="bulk-progress-fill" data-field="bulk-progress-fill"></span></div>
+        <span class="bulk-progress-label" data-field="bulk-progress-label"></span>
+      </div>
+
+      <p class="field-hint error" data-field="bulk-error" hidden></p>
+
+      <footer class="form-actions">
+        <p class="hint inline-hint" data-field="bulk-hint">Right-click selections and choose <em>Add to issue batch</em> to queue more.</p>
+        <button class="btn primary" type="button" data-action="file-bulk" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12h14"></path><path d="M13 5l7 7-7 7"></path>
+          </svg>
+          <span data-field="bulk-submit-label">File all</span>
+        </button>
+      </footer>
+    </section>
+  </template>
+
+  <template id="tpl-bulk-row">
+    <li class="bulk-row" role="listitem">
+      <span class="bulk-row-status" data-field="bulk-row-status" data-state="pending" aria-hidden="true">
+        <svg class="bulk-row-icon pending" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle></svg>
+      </span>
+      <div class="bulk-row-body">
+        <div class="bulk-row-meta">
+          <span class="bulk-row-host" data-field="bulk-row-host"></span>
+          <span class="bulk-row-section" data-field="bulk-row-section"></span>
+        </div>
+        <p class="bulk-row-snippet" data-field="bulk-row-snippet"></p>
+        <a class="bulk-row-link" data-field="bulk-row-link" target="_blank" rel="noopener noreferrer" hidden></a>
+      </div>
+      <button class="bulk-row-remove" type="button" data-action="remove-bulk" aria-label="Remove from batch" title="Remove from batch">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+        </svg>
+      </button>
+    </li>
+  </template>
+
   <template id="tpl-drafts">
     <section class="drafts glass" data-drafts>
       <header class="drafts-head">

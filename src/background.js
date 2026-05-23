@@ -19,10 +19,20 @@ const STORAGE_KEYS = Object.freeze({
   installedAt: "qti.installedAt",
   lastVersion: "qti.lastVersion",
   pendingQuote: "qti.pendingQuote",
+  bulkQuotes: "qti.bulkQuotes",
 });
 
 const CONTEXT_MENU_ID = "qti.fileAsIssue";
 const CONTEXT_MENU_TITLE = "File as GitHub issue";
+const CONTEXT_MENU_BULK_ID = "qti.addToBatch";
+const CONTEXT_MENU_BULK_TITLE = "Add to issue batch";
+const MAX_BULK_QUOTES = 20;
+
+function __qtiQuoteFingerprint(q) {
+  const sel = (q?.selectionText || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const url = String(q?.pageUrl || "").trim();
+  return `${url}::${sel}`;
+}
 
 /** @typedef {{ type: string, [key: string]: unknown }} Msg */
 
@@ -51,6 +61,27 @@ on("getPendingQuote", async () => {
 on("clearPendingQuote", async () => {
   await chrome.storage.local.remove(STORAGE_KEYS.pendingQuote);
   return { cleared: true };
+});
+
+on("getBulkQuotes", async () => {
+  const out = await chrome.storage.local.get(STORAGE_KEYS.bulkQuotes);
+  const list = out[STORAGE_KEYS.bulkQuotes];
+  return Array.isArray(list) ? list : [];
+});
+
+on("clearBulkQuotes", async () => {
+  await chrome.storage.local.remove(STORAGE_KEYS.bulkQuotes);
+  return { cleared: true };
+});
+
+on("removeBulkQuote", async (msg) => {
+  const id = String(msg?.id || "");
+  if (!id) return { removed: false };
+  const out = await chrome.storage.local.get(STORAGE_KEYS.bulkQuotes);
+  const list = Array.isArray(out[STORAGE_KEYS.bulkQuotes]) ? out[STORAGE_KEYS.bulkQuotes] : [];
+  const next = list.filter((q) => String(q?.id || "") !== id);
+  await chrome.storage.local.set({ [STORAGE_KEYS.bulkQuotes]: next });
+  return { removed: next.length !== list.length, remaining: next.length };
 });
 
 // submitIssue — POST a GitHub issue using the stored PAT.
@@ -131,6 +162,11 @@ function ensureContextMenu() {
       chrome.contextMenus.create({
         id: CONTEXT_MENU_ID,
         title: CONTEXT_MENU_TITLE,
+        contexts: ["selection"],
+      });
+      chrome.contextMenus.create({
+        id: CONTEXT_MENU_BULK_ID,
+        title: CONTEXT_MENU_BULK_TITLE,
         contexts: ["selection"],
       });
     });
@@ -252,7 +288,7 @@ async function captureVisibleTabScreenshot(windowId) {
 }
 
 chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== CONTEXT_MENU_ID) return;
+  if (info.menuItemId !== CONTEXT_MENU_ID && info.menuItemId !== CONTEXT_MENU_BULK_ID) return;
   // Fire selection capture and screenshot in parallel — both depend on the
   // tab still being focused, and captureVisibleTab will only work while the
   // popup hasn't yet stolen focus.
@@ -274,13 +310,46 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
     capturedAt: new Date().toISOString(),
   };
   try {
-    await chrome.storage.local.set({ [STORAGE_KEYS.pendingQuote]: quote });
+    if (info.menuItemId === CONTEXT_MENU_BULK_ID) {
+      // Append to the batch queue. Dedupe by URL + selection fingerprint so
+      // accidental double-click on the same passage doesn't bloat the list.
+      const out = await chrome.storage.local.get(STORAGE_KEYS.bulkQuotes);
+      const prev = Array.isArray(out[STORAGE_KEYS.bulkQuotes]) ? out[STORAGE_KEYS.bulkQuotes] : [];
+      const fp = __qtiQuoteFingerprint(quote);
+      const filtered = prev.filter((q) => __qtiQuoteFingerprint(q) !== fp);
+      const id = (globalThis.crypto?.randomUUID && crypto.randomUUID()) || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const next = [{ id: `b_${id}`, ...quote }, ...filtered].slice(0, MAX_BULK_QUOTES);
+      await chrome.storage.local.set({ [STORAGE_KEYS.bulkQuotes]: next });
+      // Reflect queue size on the action badge so the user sees it without
+      // needing to open the popup. Cleared once the batch is filed/emptied.
+      try {
+        if (chrome.action?.setBadgeText) {
+          await chrome.action.setBadgeText({ text: String(next.length) });
+          chrome.action.setBadgeBackgroundColor?.({ color: "#7C8CFF" });
+        }
+      } catch { /* badge optional */ }
+    } else {
+      await chrome.storage.local.set({ [STORAGE_KEYS.pendingQuote]: quote });
+    }
   } catch (err) {
-    console.warn(LOG_PREFIX, "storage.set pendingQuote failed", err);
+    console.warn(LOG_PREFIX, "storage.set quote failed", err);
   }
-  if (chrome.action?.openPopup) {
+  if (info.menuItemId === CONTEXT_MENU_ID && chrome.action?.openPopup) {
     try { await chrome.action.openPopup(); } catch { /* requires user gesture in some contexts */ }
   }
+});
+
+// Keep the badge in sync if the popup mutates the batch.
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area !== "local" || !changes[STORAGE_KEYS.bulkQuotes]) return;
+  const list = changes[STORAGE_KEYS.bulkQuotes].newValue;
+  const count = Array.isArray(list) ? list.length : 0;
+  try {
+    if (chrome.action?.setBadgeText) {
+      chrome.action.setBadgeText({ text: count > 0 ? String(count) : "" });
+      if (count > 0) chrome.action.setBadgeBackgroundColor?.({ color: "#7C8CFF" });
+    }
+  } catch { /* badge optional */ }
 });
 
 chrome.runtime.onStartup?.addListener(() => {
@@ -312,4 +381,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 console.log(LOG_PREFIX, "service worker booted");
 
 // Exported for unit-style smoke checks (not used by the SW runtime).
-export const __test__ = { handlers, STORAGE_KEYS, CONTEXT_MENU_ID, CONTEXT_MENU_TITLE };
+export const __test__ = { handlers, STORAGE_KEYS, CONTEXT_MENU_ID, CONTEXT_MENU_TITLE, CONTEXT_MENU_BULK_ID, CONTEXT_MENU_BULK_TITLE, MAX_BULK_QUOTES };
