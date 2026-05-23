@@ -363,6 +363,7 @@ const tplRecentIssues = document.getElementById("tpl-recent-issues");
 const tplRecentIssueRow = document.getElementById("tpl-recent-issue-row");
 const tplQuoteHistory = document.getElementById("tpl-quote-history");
 const tplQuoteHistoryRow = document.getElementById("tpl-quote-history-row");
+const tplPalette = document.getElementById("tpl-palette");
 
 let settingsOpen = false;
 
@@ -3793,5 +3794,403 @@ async function appendBulkSection() {
 chrome?.storage?.onChanged?.addListener((changes, area) => {
   if (area === "local" && (changes[STORAGE_KEYS.pendingQuote] || changes[STORAGE_KEYS.bulkQuotes])) loadPending();
 });
+
+// ---------------------------------------------------------------------------
+// Cmd+K / Ctrl+K command palette
+// ---------------------------------------------------------------------------
+
+let paletteOpen = false;
+let paletteNode = null;
+let paletteInput = null;
+let paletteListEl = null;
+let paletteCountEl = null;
+let paletteItems = [];
+let paletteActive = 0;
+let palettePrevFocus = null;
+
+function paletteHighlight(text, indices) {
+  const set = new Set(Array.isArray(indices) ? indices : []);
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < text.length; i++) {
+    if (set.has(i)) {
+      const m = document.createElement("span");
+      m.className = "palette-row-match";
+      m.textContent = text[i];
+      frag.appendChild(m);
+    } else {
+      frag.appendChild(document.createTextNode(text[i]));
+    }
+  }
+  return frag;
+}
+
+function paletteIcon(kind) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.5");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.classList.add("palette-row-icon");
+  svg.setAttribute("aria-hidden", "true");
+  const paths = {
+    repo: ["M4 4.5A2.5 2.5 0 0 1 6.5 2H20v17H6.5A2.5 2.5 0 0 0 4 21.5v-17z", "M4 19.5A2.5 2.5 0 0 1 6.5 17H20"],
+    label: ["M3 12l9-9 9 9-9 9-9-9z"],
+    template: ["M4 5h16", "M4 12h16", "M4 19h10"],
+    toggle: ["M8 7h8a5 5 0 0 1 0 10H8a5 5 0 0 1 0-10z", "M8 12h.01"],
+    draft: ["M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z", "M14 3v6h6"],
+    issue: ["M12 7v6", "M12 17h.01", "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z"],
+    settings: ["M12 8.5v7", "M8.5 12h7", "M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0z"],
+    quote: ["M7 8h7a4 4 0 0 1 0 8h-2", "M7 8v8"],
+  };
+  const list = paths[kind] || paths.quote;
+  for (const d of list) {
+    const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    p.setAttribute("d", d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
+async function paletteCommands(query) {
+  const cmds = [];
+  const form = root.querySelector("[data-form]") || null;
+  const repoInput = form?.querySelector('[data-field="repo"]') || null;
+  const labelsInput = form?.querySelector('[data-field="labels"]') || null;
+
+  // Recent repos -> switch-to actions
+  try {
+    const recents = await getRecentRepos();
+    for (const r of recents.slice(0, 8)) {
+      cmds.push({
+        group: "Repository",
+        icon: "repo",
+        label: `Switch repo → ${r.value}`,
+        haystack: `repo switch ${r.value}`,
+        run: () => {
+          if (!repoInput) return;
+          repoInput.value = r.value;
+          repoInput.dispatchEvent(new Event("input", { bubbles: true }));
+          repoInput.dispatchEvent(new Event("change", { bubbles: true }));
+          repoInput.focus();
+        },
+      });
+    }
+  } catch {}
+
+  // Insert label suggestions from defaults across all known repos.
+  try {
+    if (labelsInput) {
+      const defaultsAll = await getAllRepoDefaults();
+      const seen = new Set();
+      for (const v of Object.values(defaultsAll || {})) {
+        for (const lab of v?.labels || []) {
+          const l = String(lab).trim();
+          if (!l || seen.has(l)) continue;
+          seen.add(l);
+          cmds.push({
+            group: "Labels",
+            icon: "label",
+            label: `Add label "${l}"`,
+            haystack: `label add ${l}`,
+            run: () => {
+              const cur = parseLabels(labelsInput.value || "");
+              if (!cur.some((x) => x.toLowerCase() === l.toLowerCase())) cur.push(l);
+              labelsInput.value = cur.join(", ");
+              labelsInput.dispatchEvent(new Event("input", { bubbles: true }));
+              labelsInput.dispatchEvent(new Event("change", { bubbles: true }));
+            },
+          });
+          if (seen.size >= 12) break;
+        }
+        if (seen.size >= 12) break;
+      }
+    }
+  } catch {}
+
+  // Template actions for the current repo.
+  if (form) {
+    const tmplToggle = form.querySelector('[data-action="toggle-template"]');
+    const tmplDefaultBtn = form.querySelector('[data-action="insert-default-template"]');
+    const tmplSaveBtn = form.querySelector('[data-action="save-template"]');
+    const tmplClearBtn = form.querySelector('[data-action="clear-template"]');
+    if (tmplToggle) {
+      cmds.push({
+        group: "Template",
+        icon: "template",
+        label: "Toggle template editor",
+        haystack: "template toggle editor",
+        run: () => tmplToggle.click(),
+      });
+    }
+    if (tmplDefaultBtn) {
+      cmds.push({
+        group: "Template",
+        icon: "template",
+        label: "Insert default template",
+        haystack: "template insert default reset",
+        run: () => tmplDefaultBtn.click(),
+      });
+    }
+    if (tmplSaveBtn) {
+      cmds.push({
+        group: "Template",
+        icon: "template",
+        label: "Save template for current repo",
+        haystack: "template save current repo",
+        run: () => tmplSaveBtn.click(),
+      });
+    }
+    if (tmplClearBtn) {
+      cmds.push({
+        group: "Template",
+        icon: "template",
+        label: "Clear template for current repo",
+        haystack: "template clear remove",
+        run: () => tmplClearBtn.click(),
+      });
+    }
+
+    // Toggle commands.
+    const togglers = [
+      ["toggle-preview", "Toggle body preview", "toggle preview body markdown"],
+      ["toggle-privacy", "Toggle privacy mode", "toggle privacy scrub tracking"],
+      ["toggle-highlight", "Toggle spotlight selection screenshot", "toggle highlight spotlight screenshot"],
+      ["toggle-language", "Toggle language label", "toggle language label auto"],
+    ];
+    for (const [act, label, hay] of togglers) {
+      const btn = form.querySelector(`[data-action="${act}"]`);
+      if (btn) cmds.push({ group: "Toggles", icon: "toggle", label, haystack: hay, run: () => btn.click() });
+    }
+
+    // Issue type radios.
+    for (const t of ["bug", "feature", "question"]) {
+      const btn = form.querySelector(`[data-action="set-issue-type"][data-issue-type="${t}"]`);
+      if (btn) {
+        cmds.push({
+          group: "Issue type",
+          icon: "issue",
+          label: `Set issue type: ${t}`,
+          haystack: `issue type ${t}`,
+          run: () => btn.click(),
+        });
+      }
+    }
+
+    const saveDraftBtn = form.querySelector('[data-action="save-draft"]');
+    if (saveDraftBtn) {
+      cmds.push({
+        group: "Actions",
+        icon: "draft",
+        label: "Save as draft",
+        haystack: "save draft local",
+        run: () => saveDraftBtn.click(),
+      });
+    }
+    const submitBtn = form.querySelector('[data-action="submit"]');
+    if (submitBtn) {
+      cmds.push({
+        group: "Actions",
+        icon: "issue",
+        label: "File issue now",
+        haystack: "file issue submit now post",
+        run: () => submitBtn.click(),
+      });
+    }
+
+    const applyDefBtn = form.querySelector('[data-action="apply-defaults"]');
+    if (applyDefBtn) {
+      cmds.push({
+        group: "Defaults",
+        icon: "label",
+        label: "Apply repo defaults",
+        haystack: "apply defaults labels assignees",
+        run: () => applyDefBtn.click(),
+      });
+    }
+    const saveDefBtn = form.querySelector('[data-action="save-defaults"]');
+    if (saveDefBtn) {
+      cmds.push({
+        group: "Defaults",
+        icon: "label",
+        label: "Save repo defaults",
+        haystack: "save defaults labels assignees",
+        run: () => saveDefBtn.click(),
+      });
+    }
+  }
+
+  // Global commands always available.
+  const settingsBtn = document.getElementById("settings-btn");
+  if (settingsBtn) {
+    cmds.push({
+      group: "Navigation",
+      icon: "settings",
+      label: "Open settings",
+      haystack: "open settings token oauth",
+      run: () => settingsBtn.click(),
+    });
+  }
+  const themeBtn = document.getElementById("theme-btn");
+  if (themeBtn) {
+    cmds.push({
+      group: "Navigation",
+      icon: "settings",
+      label: "Cycle theme (system / light / dark)",
+      haystack: "theme dark light system toggle",
+      run: () => themeBtn.click(),
+    });
+  }
+
+  // Filter by query.
+  const q = String(query || "").trim();
+  if (!q) return cmds;
+  const ranked = [];
+  for (let i = 0; i < cmds.length; i++) {
+    const c = cmds[i];
+    const m = fuzzyMatch(c.haystack || c.label, q) || fuzzyMatch(c.label, q);
+    if (!m) continue;
+    // Compute label indices for highlighting against the label string.
+    const labelMatch = fuzzyMatch(c.label, q);
+    ranked.push({ cmd: c, score: m.score, idx: i, labelIndices: labelMatch?.indices || [] });
+  }
+  ranked.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
+  return ranked.map((r) => Object.assign({}, r.cmd, { _labelIndices: r.labelIndices }));
+}
+
+function renderPaletteList() {
+  if (!paletteListEl) return;
+  paletteListEl.replaceChildren();
+  if (paletteItems.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "palette-empty";
+    empty.textContent = "No matching commands.";
+    paletteListEl.appendChild(empty);
+    if (paletteCountEl) paletteCountEl.textContent = "0 results";
+    return;
+  }
+  let lastGroup = null;
+  paletteItems.forEach((cmd, i) => {
+    if (cmd.group && cmd.group !== lastGroup) {
+      const g = document.createElement("li");
+      g.className = "palette-row-group";
+      g.setAttribute("role", "presentation");
+      g.textContent = cmd.group;
+      paletteListEl.appendChild(g);
+      lastGroup = cmd.group;
+    }
+    const li = document.createElement("li");
+    li.className = "palette-row";
+    li.setAttribute("role", "option");
+    li.dataset.idx = String(i);
+    if (i === paletteActive) li.setAttribute("data-active", "true");
+    li.appendChild(paletteIcon(cmd.icon || "quote"));
+    const body = document.createElement("div");
+    body.className = "palette-row-body";
+    const label = document.createElement("div");
+    label.className = "palette-row-label";
+    if (cmd._labelIndices && cmd._labelIndices.length) {
+      label.appendChild(paletteHighlight(cmd.label, cmd._labelIndices));
+    } else {
+      label.textContent = cmd.label;
+    }
+    body.appendChild(label);
+    li.appendChild(body);
+    li.addEventListener("mousedown", (e) => { e.preventDefault(); });
+    li.addEventListener("click", () => paletteRun(i));
+    paletteListEl.appendChild(li);
+  });
+  if (paletteCountEl) paletteCountEl.textContent = `${paletteItems.length} result${paletteItems.length === 1 ? "" : "s"}`;
+  const activeEl = paletteListEl.querySelector('[data-active="true"]');
+  if (activeEl && typeof activeEl.scrollIntoView === "function") {
+    activeEl.scrollIntoView({ block: "nearest" });
+  }
+}
+
+async function refreshPalette() {
+  if (!paletteOpen) return;
+  const q = paletteInput?.value || "";
+  paletteItems = await paletteCommands(q);
+  if (paletteActive >= paletteItems.length) paletteActive = 0;
+  renderPaletteList();
+}
+
+function paletteRun(idx) {
+  const cmd = paletteItems[idx];
+  closePalette();
+  if (cmd && typeof cmd.run === "function") {
+    try { cmd.run(); } catch (err) { console.warn("palette run failed:", err); }
+  }
+}
+
+function onPaletteKeydown(e) {
+  if (!paletteOpen) return;
+  if (e.key === "Escape") { e.preventDefault(); closePalette(); return; }
+  if (e.key === "ArrowDown" || e.key === "Down") {
+    e.preventDefault();
+    if (paletteItems.length === 0) return;
+    paletteActive = (paletteActive + 1) % paletteItems.length;
+    renderPaletteList();
+  } else if (e.key === "ArrowUp" || e.key === "Up") {
+    e.preventDefault();
+    if (paletteItems.length === 0) return;
+    paletteActive = (paletteActive - 1 + paletteItems.length) % paletteItems.length;
+    renderPaletteList();
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    if (paletteItems.length > 0) paletteRun(paletteActive);
+  }
+}
+
+function closePalette() {
+  if (!paletteOpen) return;
+  paletteOpen = false;
+  if (paletteNode && paletteNode.parentNode) paletteNode.parentNode.removeChild(paletteNode);
+  paletteNode = null;
+  paletteInput = null;
+  paletteListEl = null;
+  paletteCountEl = null;
+  paletteItems = [];
+  paletteActive = 0;
+  document.removeEventListener("keydown", onPaletteKeydown, true);
+  if (palettePrevFocus && typeof palettePrevFocus.focus === "function") {
+    try { palettePrevFocus.focus(); } catch {}
+  }
+  palettePrevFocus = null;
+}
+
+function openPalette() {
+  if (paletteOpen || !tplPalette) return;
+  palettePrevFocus = document.activeElement;
+  paletteOpen = true;
+  const frag = tplPalette.content.cloneNode(true);
+  paletteNode = frag.querySelector("[data-palette]");
+  paletteInput = frag.querySelector('[data-field="palette-input"]');
+  paletteListEl = frag.querySelector('[data-field="palette-list"]');
+  paletteCountEl = frag.querySelector('[data-field="palette-count"]');
+  paletteActive = 0;
+  paletteNode.querySelector('[data-action="palette-close"]').addEventListener("click", () => closePalette());
+  paletteInput.addEventListener("input", () => { paletteActive = 0; refreshPalette(); });
+  document.body.appendChild(paletteNode);
+  document.addEventListener("keydown", onPaletteKeydown, true);
+  setTimeout(() => paletteInput?.focus(), 10);
+  refreshPalette();
+}
+
+if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+  document.addEventListener("keydown", (e) => {
+    const isToggle = (e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey) && !e.altKey;
+    if (!isToggle) return;
+    e.preventDefault();
+    if (paletteOpen) closePalette(); else openPalette();
+  });
+}
+
+if (typeof globalThis.__qti === "object" && globalThis.__qti) {
+  globalThis.__qti.openPalette = openPalette;
+  globalThis.__qti.closePalette = closePalette;
+  globalThis.__qti.paletteCommands = paletteCommands;
+}
 if (root) loadPending();
 

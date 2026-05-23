@@ -933,6 +933,28 @@
     </div>
   </template>
 
+  <template id="tpl-palette">
+    <div class="palette" data-palette role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="palette-backdrop" data-action="palette-close" aria-hidden="true"></div>
+      <div class="palette-panel glass" role="document">
+        <div class="palette-search">
+          <svg viewBox="0 0 24 24" class="palette-search-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="M20 20l-3.5-3.5"></path>
+          </svg>
+          <input class="palette-input" type="text" data-field="palette-input" placeholder="Type a command — repo, label, template, toggle…" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="qti-palette-list">
+          <span class="palette-kbd" aria-hidden="true">esc</span>
+        </div>
+        <ul id="qti-palette-list" class="palette-list" data-field="palette-list" role="listbox"></ul>
+        <footer class="palette-foot">
+          <span class="palette-foot-hint"><span class="palette-kbd">↑</span><span class="palette-kbd">↓</span> navigate</span>
+          <span class="palette-foot-hint"><span class="palette-kbd">↵</span> run</span>
+          <span class="palette-foot-count" data-field="palette-count"></span>
+        </footer>
+      </div>
+    </div>
+  </template>
+
   <script type="module" src="popup.js"></script>
 </body>
 </html>
