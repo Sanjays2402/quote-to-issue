@@ -1,0 +1,12 @@
+{
+  "name": "quote-to-issue",
+  "version": "0.1.0",
+  "description": "Select text on any page → file a GitHub issue with source URL, screenshot, and surrounding context.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "echo 'no-op'",
+    "test": "node scripts/smoke.mjs",
+    "build": "echo 'no-op'"
+  }
+}
