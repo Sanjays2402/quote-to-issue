@@ -34,6 +34,109 @@ function __qtiQuoteFingerprint(q) {
   return `${url}::${sel}`;
 }
 
+// ---------------------------------------------------------------------------
+// Markdown helpers (kept lean — duplicated from popup.js so the keyboard
+// shortcut path can file an issue without ever instantiating the popup).
+// ---------------------------------------------------------------------------
+
+function __qtiHostnameOf(u) {
+  try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; }
+}
+
+function __qtiDeriveTitle(q) {
+  const t = String(q?.selectionText || "").trim().replace(/\s+/g, " ");
+  if (!t) return q?.pageTitle ? `Quote from: ${q.pageTitle}` : "";
+  const max = 72;
+  const trimmed = t.length > max ? t.slice(0, max - 1).replace(/\s+\S*$/, "") + "\u2026" : t;
+  return `Quote: ${trimmed}`;
+}
+
+function __qtiBuildSourceUrlAnchor(q) {
+  const url = String(q?.pageUrl || "").trim();
+  if (!url) return "";
+  const text = String(q?.selectionText || "").replace(/\s+/g, " ").trim();
+  if (!text) return url;
+  if (url.includes("#")) return url;
+  const enc = (s) => encodeURIComponent(s).replace(/-/g, "%2D").replace(/,/g, "%2C").replace(/&/g, "%26");
+  const MAX = 300;
+  if (text.length <= MAX) return `${url}#:~:text=${enc(text)}`;
+  const words = text.split(" ").filter(Boolean);
+  const startWords = words.slice(0, 6).join(" ");
+  const endWords = words.slice(-6).join(" ");
+  if (!startWords || !endWords || startWords === endWords) return `${url}#:~:text=${enc(text.slice(0, MAX))}`;
+  return `${url}#:~:text=${enc(startWords)},${enc(endWords)}`;
+}
+
+function __qtiBuildMarkdownBody(q) {
+  if (!q) return "";
+  const lines = [];
+  const quoted = String(q.selectionText || "").trim();
+  if (quoted) {
+    for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+    lines.push("");
+  }
+  const before = String(q.contextBefore || "").trim();
+  const after = String(q.contextAfter || "").trim();
+  if (before || after) {
+    lines.push("**Context:** " + (before ? `\u2026${before} ` : "") + (quoted ? `**${quoted.slice(0, 200)}${quoted.length > 200 ? "\u2026" : ""}**` : "") + (after ? ` ${after}\u2026` : ""));
+    lines.push("");
+  }
+  lines.push("---");
+  if (q.pageTitle || q.pageUrl) {
+    const title = q.pageTitle ? String(q.pageTitle).replace(/[\[\]]/g, "") : (__qtiHostnameOf(q.pageUrl) || q.pageUrl);
+    const anchored = __qtiBuildSourceUrlAnchor(q) || q.pageUrl || "#";
+    lines.push(`**Source:** [${title}](${anchored})`);
+    if (anchored && anchored !== (q.pageUrl || "") && q.pageUrl) {
+      lines.push(`<sub>Plain URL: <${q.pageUrl}></sub>`);
+    }
+  }
+  if (q.nearestHeading) lines.push(`**Section:** ${q.nearestHeading}`);
+  if (q.screenshot && q.screenshot.dataUrl) {
+    const dim = (q.screenshot.width && q.screenshot.height) ? `${q.screenshot.width}\u00d7${q.screenshot.height}` : "PNG";
+    lines.push(`**Screenshot:** captured (${dim}) \u2014 paste from clipboard or attach the downloaded PNG when filing.`);
+  }
+  if (q.capturedAt) lines.push(`**Captured:** ${q.capturedAt}`);
+  return lines.join("\n").trim();
+}
+
+function __qtiRenderTemplate(tpl, q) {
+  if (!tpl) return "";
+  const quoted = String(q?.selectionText || "").trim();
+  const quoteBlock = quoted ? quoted.split(/\r?\n/).map((ln) => "> " + ln).join("\n") : "";
+  const repls = {
+    quote: quoted,
+    quote_blockquote: quoteBlock,
+    source_title: String(q?.pageTitle || ""),
+    source_url: String(q?.pageUrl || ""),
+    source_url_anchor: __qtiBuildSourceUrlAnchor(q) || String(q?.pageUrl || ""),
+    section: String(q?.nearestHeading || ""),
+    captured_at: String(q?.capturedAt || ""),
+    context_before: String(q?.contextBefore || ""),
+    context_after: String(q?.contextAfter || ""),
+  };
+  return String(tpl).replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k) => Object.prototype.hasOwnProperty.call(repls, k) ? repls[k] : m);
+}
+
+// Briefly flash the action badge to acknowledge the shortcut result, then
+// restore the previous batch-count badge (if any) so we don't clobber state.
+async function __qtiFlashBadge(text, color, ms = 2400) {
+  if (!chrome.action?.setBadgeText) return;
+  let prevText = "";
+  try { prevText = await chrome.action.getBadgeText({}); } catch { /* ignore */ }
+  let prevColor = null;
+  try { prevColor = await chrome.action.getBadgeBackgroundColor?.({}); } catch { /* ignore */ }
+  try {
+    await chrome.action.setBadgeText({ text });
+    await chrome.action.setBadgeBackgroundColor?.({ color });
+  } catch { /* ignore */ }
+  setTimeout(async () => {
+    try {
+      await chrome.action.setBadgeText({ text: prevText || "" });
+      if (prevColor) await chrome.action.setBadgeBackgroundColor?.({ color: prevColor });
+    } catch { /* ignore */ }
+  }, ms);
+}
+
 /** @typedef {{ type: string, [key: string]: unknown }} Msg */
 
 const handlers = new Map();
@@ -355,6 +458,141 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
 chrome.runtime.onStartup?.addListener(() => {
   ensureContextMenu();
   console.log(LOG_PREFIX, "onStartup");
+});
+
+// ---------------------------------------------------------------------------
+// Keyboard shortcut: file an issue directly, no popup.
+//
+// Resolution rules:
+//   * Target repo = most-recent in qti.recentRepos (the popup writes here on
+//     every successful submit). If none, we fall back to staging the quote
+//     as the pending one and surface a ! badge so the user opens the popup.
+//   * Body template = stored per-repo template (if any) rendered with the
+//     standard placeholder set, otherwise the canonical buildMarkdownBody.
+//   * Title = deriveTitle. Labels = none (per-repo default labels arrive in
+//     a later roadmap item; the keyboard path stays minimal until then).
+// ---------------------------------------------------------------------------
+
+async function __qtiBuildQuoteFromActiveTab() {
+  const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = tabs?.[0];
+  if (!tab?.id) return { error: "no active tab" };
+  const [enriched, screenshot] = await Promise.all([
+    captureSelectionFromTab(tab.id),
+    captureVisibleTabScreenshot(tab.windowId),
+  ]);
+  const selectionText = String(enriched?.selectionText || "").trim();
+  if (!selectionText) return { error: "no selection — highlight text first" };
+  return {
+    quote: {
+      selectionText,
+      selectionHtml: enriched?.selectionHtml ?? "",
+      contextBefore: enriched?.contextBefore ?? "",
+      contextAfter: enriched?.contextAfter ?? "",
+      nearestHeading: enriched?.nearestHeading ?? "",
+      pageUrl: tab.url ?? "",
+      pageTitle: tab.title ?? "",
+      frameUrl: "",
+      screenshot: screenshot || null,
+      capturedAt: new Date().toISOString(),
+    },
+  };
+}
+
+async function __qtiResolveTargetRepo() {
+  try {
+    const out = await chrome.storage.local.get(["qti.recentRepos"]);
+    const list = Array.isArray(out["qti.recentRepos"]) ? out["qti.recentRepos"] : [];
+    for (const entry of list) {
+      const v = String(entry?.value || "").trim();
+      if (REPO_RE.test(v)) return v;
+    }
+  } catch { /* ignore */ }
+  return "";
+}
+
+async function __qtiResolveRepoTemplate(repo) {
+  try {
+    const out = await chrome.storage.local.get(["qti.repoTemplates"]);
+    const map = out["qti.repoTemplates"];
+    if (!map || typeof map !== "object") return "";
+    const tpl = map[repo.toLowerCase()] || map[repo];
+    const body = typeof tpl?.body === "string" ? tpl.body.trim() : "";
+    return body;
+  } catch { /* ignore */ }
+  return "";
+}
+
+async function __qtiBumpRecentRepo(repo) {
+  try {
+    const out = await chrome.storage.local.get(["qti.recentRepos"]);
+    const prev = Array.isArray(out["qti.recentRepos"]) ? out["qti.recentRepos"] : [];
+    const lower = repo.toLowerCase();
+    const filtered = prev.filter((e) => String(e?.value || "").toLowerCase() !== lower);
+    const next = [{ value: repo, lastUsed: new Date().toISOString() }, ...filtered].slice(0, 8);
+    await chrome.storage.local.set({ "qti.recentRepos": next });
+  } catch { /* ignore */ }
+}
+
+async function handleFileIssueShortcut() {
+  const { quote, error } = await __qtiBuildQuoteFromActiveTab();
+  if (error || !quote) {
+    console.warn(LOG_PREFIX, "shortcut: capture failed", error);
+    __qtiFlashBadge("!", "#E5484D");
+    return;
+  }
+  const repo = await __qtiResolveTargetRepo();
+  if (!repo) {
+    // No saved repo yet — stage the quote so the popup picks it up and the
+    // user can pick a repo. The popup is the one with the chooser UI.
+    try { await chrome.storage.local.set({ [STORAGE_KEYS.pendingQuote]: quote }); } catch { /* ignore */ }
+    __qtiFlashBadge("?", "#F5A623");
+    try { await chrome.action?.openPopup?.(); } catch { /* requires gesture */ }
+    return;
+  }
+  const title = __qtiDeriveTitle(quote);
+  const tpl = await __qtiResolveRepoTemplate(repo);
+  const body = tpl ? __qtiRenderTemplate(tpl, quote) : __qtiBuildMarkdownBody(quote);
+  try {
+    const handler = handlers.get("submitIssue");
+    const result = await handler({ type: "submitIssue", repo, title, body, labels: [] });
+    await __qtiBumpRecentRepo(repo);
+    __qtiFlashBadge("\u2713", "#3DD68C");
+    console.log(LOG_PREFIX, "shortcut filed #" + (result?.number ?? "?"), result?.htmlUrl);
+  } catch (err) {
+    console.warn(LOG_PREFIX, "shortcut submit failed", err);
+    // Stash the quote so the popup can recover and let the user retry.
+    try { await chrome.storage.local.set({ [STORAGE_KEYS.pendingQuote]: quote }); } catch { /* ignore */ }
+    __qtiFlashBadge("!", "#E5484D");
+  }
+}
+
+async function handleAddToBatchShortcut() {
+  const { quote, error } = await __qtiBuildQuoteFromActiveTab();
+  if (error || !quote) {
+    __qtiFlashBadge("!", "#E5484D");
+    return;
+  }
+  try {
+    const out = await chrome.storage.local.get(STORAGE_KEYS.bulkQuotes);
+    const prev = Array.isArray(out[STORAGE_KEYS.bulkQuotes]) ? out[STORAGE_KEYS.bulkQuotes] : [];
+    const fp = __qtiQuoteFingerprint(quote);
+    const filtered = prev.filter((q) => __qtiQuoteFingerprint(q) !== fp);
+    const id = (globalThis.crypto?.randomUUID && crypto.randomUUID()) || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const next = [{ id: `b_${id}`, ...quote }, ...filtered].slice(0, MAX_BULK_QUOTES);
+    await chrome.storage.local.set({ [STORAGE_KEYS.bulkQuotes]: next });
+  } catch (err) {
+    console.warn(LOG_PREFIX, "shortcut batch failed", err);
+    __qtiFlashBadge("!", "#E5484D");
+  }
+}
+
+chrome.commands?.onCommand.addListener((command) => {
+  if (command === "file-issue-now") {
+    handleFileIssueShortcut().catch((err) => console.warn(LOG_PREFIX, "shortcut error", err));
+  } else if (command === "add-to-batch") {
+    handleAddToBatchShortcut().catch((err) => console.warn(LOG_PREFIX, "shortcut error", err));
+  }
 });
 
 // ---------------------------------------------------------------------------

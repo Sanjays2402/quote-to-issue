@@ -44,6 +44,15 @@ for (const needle of [
   "captureVisibleTab",
   "format: \"png\"",
   "screenshot",
+  "chrome.commands",
+  "file-issue-now",
+  "add-to-batch",
+  "handleFileIssueShortcut",
+  "handleAddToBatchShortcut",
+  "__qtiBuildMarkdownBody",
+  "__qtiDeriveTitle",
+  "__qtiRenderTemplate",
+  "__qtiFlashBadge",
 ]) {
   if (!sw.includes(needle)) {
     console.error("background.js missing scaffolding token:", needle);
@@ -362,4 +371,12 @@ let rejected = false;
 try { await tok.setToken(""); } catch { rejected = true; }
 if (!rejected) { console.error("setToken should reject empty"); process.exit(1); }
 
-console.log("\u2713 token smoke ok");
+// --- Commands manifest -----------------------------------------------------
+if (!m.commands || typeof m.commands !== "object") { console.error("manifest.commands missing"); process.exit(1); }
+for (const cmd of ["file-issue-now", "add-to-batch"]) {
+  const c = m.commands[cmd];
+  if (!c?.suggested_key?.default) { console.error("manifest.commands missing", cmd); process.exit(1); }
+  if (!c.description) { console.error("manifest.commands missing description for", cmd); process.exit(1); }
+}
+console.log("\u2713 commands smoke ok");
+

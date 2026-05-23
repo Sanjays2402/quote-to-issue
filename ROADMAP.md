@@ -17,7 +17,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Dark/light theme
 - [x] Markdown preview pane
 - [x] Auto-link source URL with line/paragraph anchor
-- [ ] Keyboard shortcut to file issue without opening popup
+- [x] Keyboard shortcut to file issue without opening popup
 - [ ] Quick-repo switcher with fuzzy search in popup
 - [ ] Issue title auto-suggestion from selection (first sentence, smart truncate)
 - [ ] Surrounding-context capture (N chars before/after selection) toggle
