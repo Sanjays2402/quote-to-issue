@@ -94,13 +94,47 @@ function buildMarkdownBody(q) {
     lines.push(`**Source:** [${title}](${q.pageUrl || "#"})`);
   }
   if (q.nearestHeading) lines.push(`**Section:** ${q.nearestHeading}`);
+  if (q.screenshot && q.screenshot.dataUrl) {
+    const dim = (q.screenshot.width && q.screenshot.height)
+      ? `${q.screenshot.width}×${q.screenshot.height}`
+      : "PNG";
+    lines.push(`**Screenshot:** captured (${dim}) — paste from clipboard or attach the downloaded PNG when filing.`);
+  }
   if (q.capturedAt) lines.push(`**Captured:** ${q.capturedAt}`);
   return lines.join("\n").trim();
 }
 
+function formatBytes(n) {
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const units = ["B", "KB", "MB"];
+  let i = 0; let v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+  const fixed = (v >= 10 || i === 0) ? v.toFixed(0) : v.toFixed(1).replace(/\.0$/, "");
+  return `${fixed} ${units[i]}`;
+}
+
+function deriveScreenshotFilename(q) {
+  const host = (hostnameOf(q?.pageUrl) || "page").replace(/[^a-z0-9.-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "page";
+  const stamp = (q?.capturedAt || new Date().toISOString()).replace(/[:.]/g, "-").replace(/Z$/, "");
+  return `quote-${host}-${stamp}.png`;
+}
+
+async function dataUrlToBlob(dataUrl) {
+  if (typeof fetch === "function") {
+    const r = await fetch(dataUrl);
+    return await r.blob();
+  }
+  const [head, body] = String(dataUrl).split(",");
+  const mime = (head.match(/data:([^;]+)/) || [, "image/png"])[1];
+  const bin = atob(body);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: mime });
+}
+
 // expose for tests
 if (typeof globalThis !== "undefined") {
-  globalThis.__qti = { parseRepo, parseLabels, deriveTitle, buildMarkdownBody };
+  globalThis.__qti = { parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename, formatBytes };
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +175,59 @@ function renderQuoteCard(q) {
   }
 
   setText("capturedAtPretty", fmtTime(q.capturedAt));
+
+  const shot = q.screenshot;
+  const shotFig = node.querySelector("[data-shot]");
+  if (shot?.dataUrl && shotFig) {
+    const img = node.querySelector('[data-field="shotImg"]');
+    if (img) img.src = shot.dataUrl;
+    const cap = node.querySelector('[data-field="shotCaption"]');
+    if (cap) {
+      const parts = [];
+      if (shot.width && shot.height) parts.push(`${shot.width}×${shot.height}`);
+      const sz = formatBytes(shot.bytes);
+      if (sz) parts.push(sz);
+      parts.push("PNG");
+      cap.textContent = parts.join(" · ");
+    }
+    shotFig.hidden = false;
+
+    const copyBtn = node.querySelector('[data-action="copy-shot"]');
+    const dlBtn = node.querySelector('[data-action="download-shot"]');
+    copyBtn?.addEventListener("click", async () => {
+      const orig = copyBtn.querySelector("span")?.textContent;
+      try {
+        const blob = await dataUrlToBlob(shot.dataUrl);
+        if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
+          throw new Error("Clipboard image write not supported");
+        }
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type || "image/png"]: blob })]);
+        copyBtn.classList.add("ok");
+        if (copyBtn.querySelector("span")) copyBtn.querySelector("span").textContent = "Copied";
+        setTimeout(() => {
+          copyBtn.classList.remove("ok");
+          if (copyBtn.querySelector("span") && orig) copyBtn.querySelector("span").textContent = orig;
+        }, 1400);
+      } catch (err) {
+        copyBtn.classList.add("err");
+        if (copyBtn.querySelector("span")) copyBtn.querySelector("span").textContent = "Failed";
+        setTimeout(() => {
+          copyBtn.classList.remove("err");
+          if (copyBtn.querySelector("span") && orig) copyBtn.querySelector("span").textContent = orig;
+        }, 1600);
+        console.warn(LOG, "copy screenshot failed", err);
+      }
+    });
+    dlBtn?.addEventListener("click", () => {
+      const a = document.createElement("a");
+      a.href = shot.dataUrl;
+      a.download = deriveScreenshotFilename(q);
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
+  }
 
   node.querySelector('[data-action="clear"]')?.addEventListener("click", async () => {
     await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);

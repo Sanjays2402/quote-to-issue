@@ -196,6 +196,28 @@
 
       <blockquote class="quote-body" data-field="selectionText"></blockquote>
 
+      <figure class="shot" data-shot hidden>
+        <div class="shot-frame">
+          <img class="shot-img" data-field="shotImg" alt="Captured screenshot of the page" />
+          <div class="shot-overlay">
+            <button class="shot-btn" type="button" data-action="copy-shot" title="Copy screenshot to clipboard" aria-label="Copy screenshot">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2"></rect>
+                <path d="M5 15V6a2 2 0 0 1 2-2h9"></path>
+              </svg>
+              <span>Copy</span>
+            </button>
+            <button class="shot-btn" type="button" data-action="download-shot" title="Download screenshot" aria-label="Download screenshot">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 4v12"></path><path d="M7 11l5 5 5-5"></path><path d="M5 20h14"></path>
+              </svg>
+              <span>PNG</span>
+            </button>
+          </div>
+        </div>
+        <figcaption class="shot-caption" data-field="shotCaption"></figcaption>
+      </figure>
+
       <div class="context" data-context hidden>
         <span class="context-label">Context</span>
         <p class="context-text"><span class="dim" data-field="contextBefore"></span> <span class="hi" data-field="hi"></span> <span class="dim" data-field="contextAfter"></span></p>

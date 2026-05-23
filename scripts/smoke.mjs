@@ -34,6 +34,9 @@ for (const needle of [
   "api.github.com",
   "X-GitHub-Api-Version",
   "Bearer ",
+  "captureVisibleTab",
+  "format: \"png\"",
+  "screenshot",
 ]) {
   if (!sw.includes(needle)) {
     console.error("background.js missing scaffolding token:", needle);
@@ -53,6 +56,10 @@ for (const needle of [
   "Body preview",
   "tpl-success",
   'data-field="success-link"',
+  'data-shot',
+  'data-action="copy-shot"',
+  'data-action="download-shot"',
+  'data-field="shotImg"',
 ]) {
   if (!popupHtml.includes(needle)) { console.error("popup.html missing token:", needle); process.exit(1); }
 }
@@ -65,12 +72,13 @@ for (const needle of [
   "deriveTitle",
   "qti.formState",
   "buildFormNode",
+  "deriveScreenshotFilename",
 ]) {
   if (!popupJs.includes(needle)) { console.error("popup.js missing token:", needle); process.exit(1); }
 }
 
 const popupCss = fs.readFileSync("src/popup.css", "utf8");
-for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body"]) {
+for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn"]) {
   if (!popupCss.includes(needle)) { console.error("popup.css missing token:", needle); process.exit(1); }
 }
 
@@ -78,7 +86,7 @@ for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body"]) {
 globalThis.document = { getElementById: () => null };
 globalThis.chrome = undefined;
 await import("../src/popup.js").catch((err) => { console.error("popup.js import failed:", err.message); process.exit(1); });
-const { parseRepo, parseLabels, deriveTitle, buildMarkdownBody } = globalThis.__qti || {};
+const { parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename, formatBytes } = globalThis.__qti || {};
 if (typeof parseRepo !== "function") { console.error("popup helpers not exported on globalThis.__qti"); process.exit(1); }
 const goodRepo = parseRepo("vercel/next.js");
 if (!goodRepo.ok || goodRepo.owner !== "vercel" || goodRepo.name !== "next.js") { console.error("parseRepo bad: vercel/next.js"); process.exit(1); }
@@ -99,6 +107,20 @@ const body = buildMarkdownBody({
 for (const needle of ["> line one", "> line two", "**Source:** [Doc](https://example.com/page)", "**Section:** Intro", "**Captured:**"]) {
   if (!body.includes(needle)) { console.error("buildMarkdownBody missing:", needle); process.exit(1); }
 }
+
+// Screenshot helpers + markdown note
+if (typeof deriveScreenshotFilename !== "function") { console.error("deriveScreenshotFilename missing"); process.exit(1); }
+const shotName = deriveScreenshotFilename({ pageUrl: "https://Example.com/path?q=1", capturedAt: "2026-05-23T10:00:00.000Z" });
+if (!shotName.endsWith(".png") || !shotName.includes("example.com")) { console.error("deriveScreenshotFilename bad:", shotName); process.exit(1); }
+if (formatBytes(2048) !== "2 KB") { console.error("formatBytes(2048) bad:", formatBytes(2048)); process.exit(1); }
+if (formatBytes(0) !== "") { console.error("formatBytes(0) bad"); process.exit(1); }
+const bodyShot = buildMarkdownBody({
+  selectionText: "hi",
+  pageTitle: "D", pageUrl: "https://e.com",
+  capturedAt: "2026-05-23T10:00:00Z",
+  screenshot: { dataUrl: "data:image/png;base64,AAAA", width: 1280, height: 720, bytes: 1024 },
+});
+if (!bodyShot.includes("**Screenshot:**") || !bodyShot.includes("1280\u00d7720")) { console.error("buildMarkdownBody screenshot line missing"); process.exit(1); }
 
 console.log("\u2713 smoke ok");
 

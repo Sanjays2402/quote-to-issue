@@ -209,9 +209,57 @@ async function captureSelectionFromTab(tabId, frameId) {
   }
 }
 
+async function captureVisibleTabScreenshot(windowId) {
+  // chrome.tabs.captureVisibleTab — relies on the manifest `activeTab` /
+  // `<all_urls>` permissions already declared. Returns a PNG data URL or null.
+  if (!chrome.tabs?.captureVisibleTab) return null;
+  try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      try {
+        chrome.tabs.captureVisibleTab(
+          windowId == null ? undefined : windowId,
+          { format: "png" },
+          (result) => {
+            const err = chrome.runtime?.lastError;
+            if (err) reject(new Error(err.message || String(err)));
+            else resolve(result || null);
+          },
+        );
+      } catch (e) { reject(e); }
+    });
+    if (!dataUrl || typeof dataUrl !== "string") return null;
+    // Probe dimensions in the service worker via createImageBitmap so the popup
+    // can lay out a correctly-proportioned thumbnail without flicker.
+    let width = 0, height = 0, bytes = 0;
+    try {
+      const idx = dataUrl.indexOf(",");
+      if (idx > 0) {
+        const b64 = dataUrl.slice(idx + 1);
+        bytes = Math.floor((b64.length * 3) / 4);
+      }
+      const blob = await (await fetch(dataUrl)).blob();
+      if (typeof createImageBitmap === "function") {
+        const bmp = await createImageBitmap(blob);
+        width = bmp.width; height = bmp.height;
+        bmp.close?.();
+      }
+    } catch { /* dimensions optional */ }
+    return { dataUrl, width, height, bytes, capturedAt: new Date().toISOString() };
+  } catch (err) {
+    console.warn(LOG_PREFIX, "captureVisibleTab failed", err);
+    return null;
+  }
+}
+
 chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== CONTEXT_MENU_ID) return;
-  const enriched = await captureSelectionFromTab(tab?.id, info.frameId);
+  // Fire selection capture and screenshot in parallel — both depend on the
+  // tab still being focused, and captureVisibleTab will only work while the
+  // popup hasn't yet stolen focus.
+  const [enriched, screenshot] = await Promise.all([
+    captureSelectionFromTab(tab?.id, info.frameId),
+    captureVisibleTabScreenshot(tab?.windowId),
+  ]);
   const selectionText = (enriched?.selectionText || info.selectionText || "").trim();
   const quote = {
     selectionText,
@@ -222,6 +270,7 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
     pageUrl: info.pageUrl ?? tab?.url ?? "",
     pageTitle: tab?.title ?? "",
     frameUrl: info.frameUrl ?? "",
+    screenshot: screenshot || null,
     capturedAt: new Date().toISOString(),
   };
   try {
