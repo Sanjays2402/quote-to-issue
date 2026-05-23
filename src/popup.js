@@ -22,6 +22,7 @@ const STORAGE_KEYS = Object.freeze({
   bulkState: "qti.bulkState",
   captureSettings: "qti.captureSettings",
   recentIssues: "qti.recentIssues",
+  offlineQueue: "qti.offlineQueue",
 });
 
 const MAX_RECENT_ISSUES = 10;
@@ -934,6 +935,75 @@ async function removeRecentIssue(repo, number) {
   await chrome.storage.local.set({ [STORAGE_KEYS.recentIssues]: next });
 }
 
+// ---------------------------------------------------------------------------
+// Offline queue — mirror of background's normalizer for popup consumers.
+// The background service worker owns the truth; popup only reads/clears.
+// ---------------------------------------------------------------------------
+const MAX_OFFLINE_QUEUE = 25;
+const MAX_QUEUE_ATTEMPTS = 8;
+
+function normalizeOfflineQueue(list) {
+  if (!Array.isArray(list)) return [];
+  const valid = [];
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const p = raw.payload || raw;
+    const repo = String(p.repo || "").trim();
+    if (!/^[^\s/]+\/[^\s/]+$/.test(repo)) continue;
+    const title = String(p.title || "").trim();
+    if (!title) continue;
+    const labels = Array.isArray(p.labels) ? p.labels.map((s) => String(s).trim()).filter(Boolean).slice(0, 24) : [];
+    const assignees = Array.isArray(p.assignees) ? p.assignees.map((s) => String(s).trim().replace(/^@+/, "")).filter(Boolean).slice(0, 10) : [];
+    const id = String(raw.id || "") || `q_${Math.random().toString(36).slice(2, 10)}`;
+    const body = String(p.body || "");
+    const attempts = Math.max(0, Math.min(MAX_QUEUE_ATTEMPTS + 1, Number(raw.attempts) || 0));
+    const queuedAt = typeof raw.queuedAt === "string" ? raw.queuedAt : new Date().toISOString();
+    const lastError = typeof raw.lastError === "string" ? raw.lastError.slice(0, 400) : "";
+    const lastTriedAt = typeof raw.lastTriedAt === "string" ? raw.lastTriedAt : "";
+    valid.push({ id, payload: { repo, title, body, labels, assignees }, attempts, queuedAt, lastTriedAt, lastError });
+  }
+  valid.sort((a, b) => (Date.parse(b.queuedAt) || 0) - (Date.parse(a.queuedAt) || 0));
+  const seen = new Set();
+  const out = [];
+  for (const v of valid) {
+    if (seen.has(v.id)) continue;
+    seen.add(v.id);
+    out.push(v);
+    if (out.length >= MAX_OFFLINE_QUEUE) break;
+  }
+  return out;
+}
+
+function isRetryableErrorMessage(msg) {
+  const s = String(msg || "");
+  if (!s) return false;
+  if (/network|failed to fetch|offline|abort|timeout|temporarily/i.test(s)) return true;
+  if (/\b(5\d{2}|408|429)\b/.test(s)) return true;
+  return false;
+}
+
+async function getOfflineQueue() {
+  try {
+    const reply = await chrome.runtime.sendMessage({ type: "getOfflineQueue" });
+    return Array.isArray(reply?.result) ? normalizeOfflineQueue(reply.result) : [];
+  } catch { return []; }
+}
+
+async function flushOfflineQueue() {
+  try {
+    const reply = await chrome.runtime.sendMessage({ type: "flushOfflineQueue" });
+    return reply?.result || null;
+  } catch { return null; }
+}
+
+async function clearOfflineQueue() {
+  try { await chrome.runtime.sendMessage({ type: "clearOfflineQueue" }); } catch { /* ignore */ }
+}
+
+async function removeOfflineItem(id) {
+  try { await chrome.runtime.sendMessage({ type: "removeOfflineItem", id }); } catch { /* ignore */ }
+}
+
 async function loadBulkState() {
   if (!chrome?.storage?.local) return {};
   const out = await chrome.storage.local.get(STORAGE_KEYS.bulkState);
@@ -997,6 +1067,7 @@ if (typeof globalThis !== "undefined") {
     normalizeDrafts, MAX_DRAFTS,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
     normalizeRecentIssues, MAX_RECENT_ISSUES,
+    normalizeOfflineQueue, MAX_OFFLINE_QUEUE, isRetryableErrorMessage,
     renderMarkdownPreview, escapeHtml,
     normalizeCaptureSettings, DEFAULT_CAPTURE_SETTINGS,
     CONTEXT_RADIUS_MIN, CONTEXT_RADIUS_MAX,
@@ -1757,6 +1828,17 @@ function buildFormNode(q, state) {
       });
       if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
       const created = reply.result || {};
+      if (created?.queued) {
+        // Offline: stash succeeded only in the queue. Keep the form intact so
+        // the user can edit and resubmit if they want, but show a transient
+        // confirmation so they know the work isn't lost.
+        await addRecentRepo(repo.value).catch(() => {});
+        await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);
+        await saveFormState({ title: "", draftId: null });
+        renderQueued({ repo: repo.value, ...created });
+        appendOfflineQueueSection().catch(() => {});
+        return;
+      }
       await addRecentRepo(repo.value).catch(() => {});
       if (created?.number && created?.htmlUrl) {
         await addRecentIssue({ repo: repo.value, number: created.number, htmlUrl: created.htmlUrl, title }).catch(() => {});
@@ -1994,6 +2076,7 @@ async function loadPending() {
   else renderEmpty();
   await appendBulkSection();
   await appendRecentIssuesSection();
+  await appendOfflineQueueSection();
 }
 
 async function appendRecentIssuesSection() {
@@ -2035,6 +2118,96 @@ async function appendRecentIssuesSection() {
     await appendRecentIssuesSection();
   });
   root.appendChild(section);
+  appendOfflineQueueSection().catch(() => {});
+}
+
+async function appendOfflineQueueSection() {
+  const tplQ = document.getElementById("tpl-offline-queue");
+  const tplR = document.getElementById("tpl-offline-queue-row");
+  if (!tplQ || !tplR) return;
+  for (const existing of root.querySelectorAll("[data-offline-queue]")) existing.remove();
+  const items = await getOfflineQueue().catch(() => []);
+  if (!items.length) return;
+  const frag = tplQ.content.cloneNode(true);
+  const section = frag.querySelector("[data-offline-queue]");
+  const list = frag.querySelector("[data-offline-queue-list]");
+  const countEl = frag.querySelector('[data-field="offline-queue-count"]');
+  const statusEl = frag.querySelector('[data-field="offline-queue-status"]');
+  const onlineDot = frag.querySelector('[data-field="offline-online-dot"]');
+  const isOnline = typeof navigator === "undefined" || navigator.onLine !== false;
+  if (onlineDot) onlineDot.dataset.online = String(isOnline);
+  if (countEl) countEl.textContent = `${items.length} pending`;
+  if (statusEl) statusEl.textContent = isOnline ? "Auto-retrying every few minutes." : "Offline. Will retry when connectivity returns.";
+  for (const it of items) {
+    const row = tplR.content.cloneNode(true);
+    const titleEl = row.querySelector('[data-field="offline-row-title"]');
+    const repoEl = row.querySelector('[data-field="offline-row-repo"]');
+    const metaEl = row.querySelector('[data-field="offline-row-meta"]');
+    const errorEl = row.querySelector('[data-field="offline-row-error"]');
+    const removeBtn = row.querySelector('[data-action="remove-offline-item"]');
+    if (titleEl) titleEl.textContent = it.payload.title;
+    if (repoEl) repoEl.textContent = it.payload.repo;
+    const bits = [`queued ${fmtRelative(it.queuedAt)}`];
+    if (it.attempts > 0) bits.push(`${it.attempts} retr${it.attempts === 1 ? "y" : "ies"}`);
+    if (metaEl) metaEl.textContent = bits.join(" \u00b7 ");
+    if (errorEl) {
+      if (it.lastError) { errorEl.hidden = false; errorEl.textContent = it.lastError; }
+      else errorEl.hidden = true;
+    }
+    removeBtn?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await removeOfflineItem(it.id);
+      await appendOfflineQueueSection();
+    });
+    list.appendChild(row);
+  }
+  const flushBtn = section.querySelector('[data-action="flush-offline-queue"]');
+  flushBtn?.addEventListener("click", async () => {
+    flushBtn.disabled = true;
+    flushBtn.classList.add("loading");
+    if (statusEl) statusEl.textContent = "Retrying now\u2026";
+    let r = null;
+    try {
+      r = await flushOfflineQueue();
+      if (r) {
+        const parts = [];
+        if (r.succeeded) parts.push(`${r.succeeded} filed`);
+        if (r.dropped) parts.push(`${r.dropped} dropped`);
+        if (r.failed) parts.push(`${r.failed} still failing`);
+        if (r.offline) parts.push("still offline");
+        if (statusEl) statusEl.textContent = parts.length ? parts.join(" \u00b7 ") : "Nothing to retry.";
+      }
+    } finally {
+      flushBtn.disabled = false;
+      flushBtn.classList.remove("loading");
+    }
+    if (r?.succeeded) await appendRecentIssuesSection();
+    await appendOfflineQueueSection();
+  });
+  const clearBtnQ = section.querySelector('[data-action="clear-offline-queue"]');
+  clearBtnQ?.addEventListener("click", async () => {
+    if (!confirm("Discard " + items.length + " queued issue" + (items.length === 1 ? "" : "s") + "?")) return;
+    await clearOfflineQueue();
+    await appendOfflineQueueSection();
+  });
+  root.appendChild(section);
+}
+
+function renderQueued(info) {
+  const tplQ = document.getElementById("tpl-queued") || document.getElementById("tpl-success");
+  if (!tplQ) return;
+  const node = tplQ.content.cloneNode(true);
+  const sub = node.querySelector('[data-field="success-sub"]') || node.querySelector('[data-field="queued-sub"]');
+  const link = node.querySelector('[data-field="success-link"]');
+  const titleEl = node.querySelector(".success-title");
+  if (titleEl) titleEl.textContent = "Queued for retry";
+  if (sub) sub.textContent = `${info?.repo || ""} \u2014 we couldn't reach GitHub. We'll keep retrying every few minutes.`;
+  if (link) { link.removeAttribute("href"); link.classList.add("disabled"); link.style.display = "none"; }
+  const fileAnother = node.querySelector('[data-action="file-another"]');
+  fileAnother?.addEventListener("click", () => loadPending());
+  root.replaceChildren(node);
+  appendOfflineQueueSection().catch(() => {});
 }
 
 async function appendBulkSection() {

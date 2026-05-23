@@ -26,4 +26,4 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Recent-issues panel: list last 10 issues filed, click to reopen on GitHub
 - [x] Per-repo default labels + assignees with chip editor
 - [x] Settings page with liquid-glass design and token rotation
-- [ ] Offline queue: retry failed POSTs when connectivity returns
+- [x] Offline queue: retry failed POSTs when connectivity returns

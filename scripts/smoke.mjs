@@ -630,3 +630,81 @@ await tok2.clearRotationHistory();
 if ((await tok2.getRotationHistory()).length !== 0) { console.error("clearRotationHistory failed"); process.exit(1); }
 await tok2.clearToken();
 console.log("\u2713 settings-rotation smoke ok");
+
+// --- Offline queue --------------------------------------------------------
+import fsRequired from "node:fs";
+const swOffline = fsRequired.readFileSync("src/background.js", "utf8");
+for (const needle of [
+  "qti.offlineQueue",
+  "__qtiNormalizeQueue",
+  "__qtiIsRetryableError",
+  "__qtiEnqueue",
+  "flushOfflineQueue",
+  "getOfflineQueue",
+  "clearOfflineQueue",
+  "removeOfflineItem",
+  "chrome.alarms",
+  "qti.offlineRetry",
+  "MAX_OFFLINE_QUEUE",
+  "MAX_QUEUE_ATTEMPTS",
+]) {
+  if (!swOffline.includes(needle)) { console.error("background.js missing offline-queue token:", needle); process.exit(1); }
+}
+const mOff = JSON.parse(fsRequired.readFileSync("manifest.json", "utf8"));
+if (!Array.isArray(mOff.permissions) || !mOff.permissions.includes("alarms")) {
+  console.error("manifest.permissions missing 'alarms'"); process.exit(1);
+}
+
+const popupHtmlOff = fsRequired.readFileSync("src/popup.html", "utf8");
+for (const needle of [
+  "tpl-offline-queue",
+  "tpl-offline-queue-row",
+  "data-offline-queue",
+  "data-offline-queue-list",
+  'data-action="flush-offline-queue"',
+  'data-action="clear-offline-queue"',
+  'data-action="remove-offline-item"',
+  'data-field="offline-queue-count"',
+  'data-field="offline-queue-status"',
+  'data-field="offline-online-dot"',
+  'data-field="offline-row-title"',
+  'data-field="offline-row-repo"',
+  'data-field="offline-row-meta"',
+  'data-field="offline-row-error"',
+]) {
+  if (!popupHtmlOff.includes(needle)) { console.error("popup.html missing offline-queue token:", needle); process.exit(1); }
+}
+const popupCssOff = fsRequired.readFileSync("src/popup.css", "utf8");
+for (const needle of [".offline-queue", ".offline-queue-head", ".offline-queue-list", ".offline-queue-row", ".offline-row-title", ".offline-row-meta", ".offline-row-error", ".offline-row-remove", ".offline-online-dot"]) {
+  if (!popupCssOff.includes(needle)) { console.error("popup.css missing offline-queue token:", needle); process.exit(1); }
+}
+const popupJsOff = fsRequired.readFileSync("src/popup.js", "utf8");
+for (const needle of ["normalizeOfflineQueue", "appendOfflineQueueSection", "getOfflineQueue", "flushOfflineQueue", "clearOfflineQueue", "removeOfflineItem", "renderQueued", "MAX_OFFLINE_QUEUE", "qti.offlineQueue", "isRetryableErrorMessage"]) {
+  if (!popupJsOff.includes(needle)) { console.error("popup.js missing offline-queue token:", needle); process.exit(1); }
+}
+
+// Behavioural: normalizer + isRetryable from popup exports
+const { normalizeOfflineQueue, MAX_OFFLINE_QUEUE: POP_MAX_Q, isRetryableErrorMessage } = globalThis.__qti;
+if (typeof normalizeOfflineQueue !== "function") { console.error("normalizeOfflineQueue missing"); process.exit(1); }
+if (typeof POP_MAX_Q !== "number" || POP_MAX_Q < 5) { console.error("MAX_OFFLINE_QUEUE invalid"); process.exit(1); }
+if (normalizeOfflineQueue(null).length !== 0) { console.error("normalizeOfflineQueue(null)"); process.exit(1); }
+const rawQ = [
+  { id: "a", payload: { repo: "vercel/next.js", title: "first", body: "x" }, queuedAt: "2026-05-22T10:00:00Z", attempts: 2, lastError: "Failed to fetch" },
+  { id: "a", payload: { repo: "vercel/next.js", title: "dup later", body: "y" }, queuedAt: "2026-05-23T10:00:00Z" }, // dedupe by id - sort puts later first, wins
+  { id: "b", payload: { repo: "facebook/react", title: "" }, queuedAt: "2026-05-23T11:00:00Z" }, // dropped (no title)
+  { id: "c", payload: { repo: "bad", title: "no" }, queuedAt: "2026-05-23T12:00:00Z" }, // dropped (bad repo)
+  { id: "d", payload: { repo: "o/r", title: "newer", body: "z" }, queuedAt: "2026-05-24T10:00:00Z" },
+];
+const outQ = normalizeOfflineQueue(rawQ);
+if (outQ.length !== 2) { console.error("normalizeOfflineQueue length:", outQ); process.exit(1); }
+if (outQ[0].id !== "d") { console.error("normalizeOfflineQueue sort wrong:", outQ); process.exit(1); }
+if (outQ[1].id !== "a" || outQ[1].payload.title !== "dup later") { console.error("normalizeOfflineQueue dedupe wrong:", outQ); process.exit(1); }
+const bigQ = Array.from({ length: POP_MAX_Q + 5 }, (_, i) => ({ id: `i-${i}`, payload: { repo: `o/r${i}`, title: `t${i}` }, queuedAt: new Date(2026, 0, 1 + i).toISOString() }));
+if (normalizeOfflineQueue(bigQ).length !== POP_MAX_Q) { console.error("normalizeOfflineQueue cap wrong"); process.exit(1); }
+if (typeof isRetryableErrorMessage !== "function") { console.error("isRetryableErrorMessage missing"); process.exit(1); }
+if (!isRetryableErrorMessage("Failed to fetch")) { console.error("isRetryable Failed to fetch"); process.exit(1); }
+if (!isRetryableErrorMessage("GitHub: 502 Bad Gateway")) { console.error("isRetryable 502"); process.exit(1); }
+if (!isRetryableErrorMessage("Network timeout")) { console.error("isRetryable timeout"); process.exit(1); }
+if (isRetryableErrorMessage("Validation failed")) { console.error("isRetryable should reject validation"); process.exit(1); }
+if (isRetryableErrorMessage("401 unauthorized")) { console.error("isRetryable should reject 401"); process.exit(1); }
+console.log("\u2713 offline-queue smoke ok");

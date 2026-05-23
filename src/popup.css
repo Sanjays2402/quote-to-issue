@@ -1512,3 +1512,105 @@ body[data-theme="light"] .template-body { background: rgba(0, 0, 0, 0.04); }
 .recent-issue-remove svg { width: 14px; height: 14px; }
 .recent-issue-remove:hover { color: var(--danger, #f87171); background: var(--glass-strong); }
 .recent-issue-remove:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }
+
+/* ---------------- Offline queue ---------------- */
+.offline-queue {
+  margin: 16px 0 0;
+  padding: 14px 16px 16px;
+  border-radius: 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  position: relative;
+  background: linear-gradient(160deg, color-mix(in oklab, var(--amber, #F5A623) 12%, transparent), transparent 55%), var(--glass);
+  border: 1px solid var(--hairline);
+}
+.offline-queue::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 1px 0 color-mix(in oklab, white 8%, transparent);
+}
+.offline-queue-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.offline-queue-head .quote-meta { display: inline-flex; align-items: center; gap: 8px; }
+.offline-online-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--danger, #f87171);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--danger, #f87171) 25%, transparent);
+  transition: background 180ms var(--ease), box-shadow 180ms var(--ease);
+}
+.offline-online-dot[data-online="true"] {
+  background: #3DD68C;
+  box-shadow: 0 0 0 3px color-mix(in oklab, #3DD68C 25%, transparent);
+}
+.offline-queue-actions { display: inline-flex; align-items: center; gap: 6px; }
+.offline-queue-count {
+  font-size: 11px;
+  letter-spacing: -0.005em;
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--amber, #F5A623) 18%, transparent);
+  border: 1px solid color-mix(in oklab, var(--amber, #F5A623) 35%, transparent);
+}
+.offline-queue-blurb {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+.offline-queue-list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 220px; overflow: auto;
+}
+.offline-queue-list::-webkit-scrollbar { width: 8px; }
+.offline-queue-list::-webkit-scrollbar-thumb {
+  background: var(--hairline); border-radius: 999px; background-clip: padding-box;
+}
+.offline-queue-row {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  background: var(--glass-strong);
+  transition: background 180ms var(--ease), border-color 180ms var(--ease);
+}
+.offline-queue-row:hover { border-color: var(--hairline-strong); }
+.offline-row-main {
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.offline-row-title {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.offline-row-meta {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.offline-row-repo {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+.offline-row-error {
+  font-size: 11px;
+  color: var(--danger, #f87171);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.offline-row-remove {
+  appearance: none; background: transparent; border: 1px solid transparent;
+  width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--text-dim); border-radius: 8px; cursor: pointer; flex-shrink: 0;
+  transition: color 180ms var(--ease), background 180ms var(--ease), border-color 180ms var(--ease);
+}
+.offline-row-remove svg { width: 14px; height: 14px; }
+.offline-row-remove:hover { color: var(--danger, #f87171); background: var(--glass-strong); border-color: var(--hairline-strong); }
+.offline-row-remove:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }

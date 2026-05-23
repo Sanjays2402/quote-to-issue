@@ -21,7 +21,13 @@ const STORAGE_KEYS = Object.freeze({
   pendingQuote: "qti.pendingQuote",
   bulkQuotes: "qti.bulkQuotes",
   captureSettings: "qti.captureSettings",
+  offlineQueue: "qti.offlineQueue",
 });
+
+const MAX_OFFLINE_QUEUE = 25;
+const MAX_QUEUE_ATTEMPTS = 8;
+const OFFLINE_ALARM = "qti.offlineRetry";
+const OFFLINE_ALARM_MIN = 5;
 
 const CONTEXT_MENU_ID = "qti.fileAsIssue";
 const CONTEXT_MENU_TITLE = "File as GitHub issue";
@@ -257,22 +263,102 @@ on("removeBulkQuote", async (msg) => {
   return { removed: next.length !== list.length, remaining: next.length };
 });
 
-// submitIssue — POST a GitHub issue using the stored PAT.
-// payload: { repo: "owner/name", title, body, labels?: string[] }
-on("submitIssue", async (msg) => {
-  const repo = String(msg?.repo || "").trim();
-  const title = String(msg?.title || "").trim();
-  const body = String(msg?.body || "");
-  const labels = Array.isArray(msg?.labels)
-    ? msg.labels.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
-    : [];
-  const assignees = Array.isArray(msg?.assignees)
-    ? msg.assignees.map((s) => String(s).trim().replace(/^@+/, "")).filter(Boolean).slice(0, 10)
-    : [];
-  if (!REPO_RE.test(repo)) throw new Error("Invalid repo (use owner/name)");
-  if (!title) throw new Error("Issue title is required");
+// ---------------------------------------------------------------------------
+// Offline queue — when a POST fails with a network/server error we stash the
+// payload and retry on a periodic alarm (and on startup, and after any
+// successful submit). 4xx validation errors are NOT queued — those need user
+// fixes, not patience.
+// ---------------------------------------------------------------------------
+
+function __qtiIsRetryableError(err) {
+  // TypeError from fetch ("Failed to fetch") + network DNS/timeout. Also
+  // status-bearing errors with 5xx or 408/429 are retryable.
+  if (!err) return false;
+  if (err.name === "TypeError") return true;
+  const s = Number(err.status);
+  if (!Number.isFinite(s)) return /network|failed to fetch|offline|abort|timeout/i.test(String(err.message || ""));
+  return s >= 500 || s === 408 || s === 429;
+}
+
+function __qtiNormalizeQueue(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const p = raw.payload || raw;
+    const repo = String(p.repo || "").trim();
+    const title = String(p.title || "").trim();
+    if (!REPO_RE.test(repo) || !title) continue;
+    const labels = Array.isArray(p.labels) ? p.labels.map((s) => String(s).trim()).filter(Boolean).slice(0, 24) : [];
+    const assignees = Array.isArray(p.assignees) ? p.assignees.map((s) => String(s).trim().replace(/^@+/, "")).filter(Boolean).slice(0, 10) : [];
+    const id = String(raw.id || "") || `q_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const body = String(p.body || "");
+    const attempts = Math.max(0, Math.min(MAX_QUEUE_ATTEMPTS + 1, Number(raw.attempts) || 0));
+    const queuedAt = typeof raw.queuedAt === "string" ? raw.queuedAt : new Date().toISOString();
+    const lastError = typeof raw.lastError === "string" ? raw.lastError.slice(0, 400) : "";
+    const lastTriedAt = typeof raw.lastTriedAt === "string" ? raw.lastTriedAt : "";
+    out.push({ id, payload: { repo, title, body, labels, assignees }, attempts, queuedAt, lastTriedAt, lastError });
+  }
+  // Dedupe by id, sort newest queuedAt first, cap.
+  const seen = new Set();
+  out.sort((a, b) => (Date.parse(b.queuedAt) || 0) - (Date.parse(a.queuedAt) || 0));
+  const deduped = [];
+  for (const it of out) {
+    if (seen.has(it.id)) continue;
+    seen.add(it.id);
+    deduped.push(it);
+    if (deduped.length >= MAX_OFFLINE_QUEUE) break;
+  }
+  return deduped;
+}
+
+async function __qtiLoadQueue() {
+  const out = await chrome.storage.local.get(STORAGE_KEYS.offlineQueue);
+  return __qtiNormalizeQueue(out[STORAGE_KEYS.offlineQueue]);
+}
+
+async function __qtiSaveQueue(list) {
+  const next = __qtiNormalizeQueue(list);
+  await chrome.storage.local.set({ [STORAGE_KEYS.offlineQueue]: next });
+  __qtiReflectQueueBadge(next.length).catch(() => {});
+  return next;
+}
+
+async function __qtiEnqueue(payload, lastError) {
+  const cur = await __qtiLoadQueue();
+  const id = `q_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const entry = {
+    id,
+    payload,
+    attempts: 0,
+    queuedAt: new Date().toISOString(),
+    lastTriedAt: "",
+    lastError: String(lastError || "").slice(0, 400),
+  };
+  const next = await __qtiSaveQueue([entry, ...cur]);
+  return { id, size: next.length };
+}
+
+async function __qtiReflectQueueBadge(count) {
+  if (!chrome.action?.setBadgeText) return;
+  // Don't clobber bulk-batch badge; bulk badge handler also runs on changes.
+  // Use a distinctive amber color when queue dominates; otherwise leave as-is.
+  try {
+    if (count > 0) {
+      await chrome.action.setBadgeText({ text: `↺${count}` });
+      chrome.action.setBadgeBackgroundColor?.({ color: "#F5A623" });
+    }
+  } catch { /* ignore */ }
+}
+
+async function __qtiPostIssue(payload) {
+  const { repo, title, body, labels, assignees } = payload;
   const token = await getToken();
-  if (!token) throw new Error("No GitHub token saved — open settings to add one.");
+  if (!token) {
+    const err = new Error("No GitHub token saved — open settings to add one.");
+    err.status = 401;
+    throw err;
+  }
   const res = await fetch(`${GITHUB_API}/repos/${repo}/issues`, {
     method: "POST",
     headers: {
@@ -281,7 +367,7 @@ on("submitIssue", async (msg) => {
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ title, body, labels, ...(assignees.length ? { assignees } : {}) }),
+    body: JSON.stringify({ title, body, labels, ...(assignees && assignees.length ? { assignees } : {}) }),
   });
   let data = null;
   try { data = await res.json(); } catch { /* may be empty */ }
@@ -305,11 +391,109 @@ on("submitIssue", async (msg) => {
     nodeId: data?.node_id ?? null,
     repo,
   };
+}
+
+async function flushOfflineQueue() {
+  const items = await __qtiLoadQueue();
+  if (!items.length) return { processed: 0, succeeded: 0, failed: 0, dropped: 0, remaining: 0 };
+  // If browser reports offline, skip work — alarm will fire again.
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return { processed: 0, succeeded: 0, failed: 0, dropped: 0, remaining: items.length, offline: true };
+  }
+  let succeeded = 0, failed = 0, dropped = 0;
+  const survivors = [];
+  const filed = [];
+  for (const item of items) {
+    try {
+      const result = await __qtiPostIssue(item.payload);
+      succeeded++;
+      filed.push({ ...result, title: item.payload.title });
+    } catch (err) {
+      const retryable = __qtiIsRetryableError(err);
+      const attempts = item.attempts + 1;
+      if (!retryable || attempts >= MAX_QUEUE_ATTEMPTS) {
+        dropped++;
+        continue;
+      }
+      failed++;
+      survivors.push({
+        ...item,
+        attempts,
+        lastTriedAt: new Date().toISOString(),
+        lastError: String(err?.message || err).slice(0, 400),
+      });
+    }
+  }
+  await __qtiSaveQueue(survivors);
+  return { processed: items.length, succeeded, failed, dropped, remaining: survivors.length, filed };
+}
+
+on("getOfflineQueue", async () => __qtiLoadQueue());
+
+on("clearOfflineQueue", async () => {
+  await chrome.storage.local.remove(STORAGE_KEYS.offlineQueue);
+  __qtiReflectQueueBadge(0).catch(() => {});
+  return { cleared: true };
+});
+
+on("removeOfflineItem", async (msg) => {
+  const id = String(msg?.id || "");
+  if (!id) return { removed: false };
+  const cur = await __qtiLoadQueue();
+  const next = cur.filter((q) => q.id !== id);
+  await __qtiSaveQueue(next);
+  return { removed: next.length !== cur.length, remaining: next.length };
+});
+
+on("flushOfflineQueue", async () => flushOfflineQueue());
+
+// submitIssue — POST a GitHub issue using the stored PAT.
+// payload: { repo: "owner/name", title, body, labels?: string[] }
+on("submitIssue", async (msg) => {
+  const repo = String(msg?.repo || "").trim();
+  const title = String(msg?.title || "").trim();
+  const body = String(msg?.body || "");
+  const labels = Array.isArray(msg?.labels)
+    ? msg.labels.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
+    : [];
+  const assignees = Array.isArray(msg?.assignees)
+    ? msg.assignees.map((s) => String(s).trim().replace(/^@+/, "")).filter(Boolean).slice(0, 10)
+    : [];
+  if (!REPO_RE.test(repo)) throw new Error("Invalid repo (use owner/name)");
+  if (!title) throw new Error("Issue title is required");
+  const payload = { repo, title, body, labels, assignees };
+  const allowQueue = msg?.allowQueue !== false;
+  try {
+    const result = await __qtiPostIssue(payload);
+    // Opportunistically drain the queue after every success — the network
+    // is clearly fine right now and any stale items have been waiting.
+    flushOfflineQueue().catch(() => {});
+    return result;
+  } catch (err) {
+    if (allowQueue && __qtiIsRetryableError(err)) {
+      const { id, size } = await __qtiEnqueue(payload, err?.message || String(err));
+      __qtiScheduleRetry();
+      return { queued: true, queueId: id, queueSize: size, reason: String(err?.message || err) };
+    }
+    throw err;
+  }
 });
 
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+
+function __qtiScheduleRetry() {
+  if (!chrome.alarms?.create) return;
+  try {
+    chrome.alarms.create(OFFLINE_ALARM, {
+      delayInMinutes: 1,
+      periodInMinutes: OFFLINE_ALARM_MIN,
+    });
+  } catch (err) {
+    console.warn(LOG_PREFIX, "alarm create failed", err);
+  }
+}
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   const manifest = chrome.runtime.getManifest();
@@ -324,7 +508,20 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     console.warn(LOG_PREFIX, "storage.set failed", err);
   }
   ensureContextMenu();
+  __qtiScheduleRetry();
   console.log(LOG_PREFIX, "onInstalled", details.reason, manifest.version);
+});
+
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm?.name !== OFFLINE_ALARM) return;
+  flushOfflineQueue()
+    .then((r) => {
+      if (r?.remaining === 0) {
+        try { chrome.alarms.clear(OFFLINE_ALARM); } catch { /* ignore */ }
+      }
+      if (r && (r.succeeded || r.dropped)) console.log(LOG_PREFIX, "offline retry", r);
+    })
+    .catch((err) => console.warn(LOG_PREFIX, "offline retry failed", err));
 });
 
 // ---------------------------------------------------------------------------
@@ -664,6 +861,9 @@ chrome.storage?.onChanged?.addListener((changes, area) => {
 
 chrome.runtime.onStartup?.addListener(() => {
   ensureContextMenu();
+  __qtiScheduleRetry();
+  // Best-effort: drain any items queued during the previous session.
+  flushOfflineQueue().catch((err) => console.warn(LOG_PREFIX, "startup flush failed", err));
   console.log(LOG_PREFIX, "onStartup");
 });
 
@@ -767,6 +967,11 @@ async function handleFileIssueShortcut() {
   try {
     const handler = handlers.get("submitIssue");
     const result = await handler({ type: "submitIssue", repo, title, body, labels: [] });
+    if (result?.queued) {
+      __qtiFlashBadge("↺", "#F5A623");
+      console.log(LOG_PREFIX, "shortcut queued (offline)", result?.queueId);
+      return;
+    }
     await __qtiBumpRecentRepo(repo);
     __qtiFlashBadge("\u2713", "#3DD68C");
     console.log(LOG_PREFIX, "shortcut filed #" + (result?.number ?? "?"), result?.htmlUrl);
@@ -830,4 +1035,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 console.log(LOG_PREFIX, "service worker booted");
 
 // Exported for unit-style smoke checks (not used by the SW runtime).
-export const __test__ = { handlers, STORAGE_KEYS, CONTEXT_MENU_ID, CONTEXT_MENU_TITLE, CONTEXT_MENU_BULK_ID, CONTEXT_MENU_BULK_TITLE, MAX_BULK_QUOTES };
+export const __test__ = {
+  handlers, STORAGE_KEYS,
+  CONTEXT_MENU_ID, CONTEXT_MENU_TITLE, CONTEXT_MENU_BULK_ID, CONTEXT_MENU_BULK_TITLE,
+  MAX_BULK_QUOTES, MAX_OFFLINE_QUEUE, MAX_QUEUE_ATTEMPTS,
+  isRetryableError: __qtiIsRetryableError,
+  normalizeOfflineQueue: __qtiNormalizeQueue,
+};
