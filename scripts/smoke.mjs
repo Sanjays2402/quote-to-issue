@@ -20,6 +20,9 @@ for (const needle of [
   "chrome.runtime.onInstalled",
   "chrome.runtime.onMessage",
   "getManifest",
+  "chrome.contextMenus",
+  "contexts: [\"selection\"]",
+  "File as GitHub issue",
 ]) {
   if (!sw.includes(needle)) {
     console.error("background.js missing scaffolding token:", needle);

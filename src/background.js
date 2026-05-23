@@ -13,7 +13,11 @@ const LOG_PREFIX = "[quote-to-issue]";
 const STORAGE_KEYS = Object.freeze({
   installedAt: "qti.installedAt",
   lastVersion: "qti.lastVersion",
+  pendingQuote: "qti.pendingQuote",
 });
+
+const CONTEXT_MENU_ID = "qti.fileAsIssue";
+const CONTEXT_MENU_TITLE = "File as GitHub issue";
 
 /** @typedef {{ type: string, [key: string]: unknown }} Msg */
 
@@ -34,6 +38,16 @@ on("getVersion", () => ({
   version: chrome.runtime.getManifest().version,
 }));
 
+on("getPendingQuote", async () => {
+  const out = await chrome.storage.local.get(STORAGE_KEYS.pendingQuote);
+  return out[STORAGE_KEYS.pendingQuote] ?? null;
+});
+
+on("clearPendingQuote", async () => {
+  await chrome.storage.local.remove(STORAGE_KEYS.pendingQuote);
+  return { cleared: true };
+});
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -50,10 +64,50 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   } catch (err) {
     console.warn(LOG_PREFIX, "storage.set failed", err);
   }
+  ensureContextMenu();
   console.log(LOG_PREFIX, "onInstalled", details.reason, manifest.version);
 });
 
+// ---------------------------------------------------------------------------
+// Context menu — "File as GitHub issue" on selection
+// ---------------------------------------------------------------------------
+
+function ensureContextMenu() {
+  if (!chrome.contextMenus?.create) return;
+  try {
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({
+        id: CONTEXT_MENU_ID,
+        title: CONTEXT_MENU_TITLE,
+        contexts: ["selection"],
+      });
+    });
+  } catch (err) {
+    console.warn(LOG_PREFIX, "contextMenus.create failed", err);
+  }
+}
+
+chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== CONTEXT_MENU_ID) return;
+  const quote = {
+    selectionText: info.selectionText ?? "",
+    pageUrl: info.pageUrl ?? tab?.url ?? "",
+    pageTitle: tab?.title ?? "",
+    frameUrl: info.frameUrl ?? "",
+    capturedAt: new Date().toISOString(),
+  };
+  try {
+    await chrome.storage.local.set({ [STORAGE_KEYS.pendingQuote]: quote });
+  } catch (err) {
+    console.warn(LOG_PREFIX, "storage.set pendingQuote failed", err);
+  }
+  if (chrome.action?.openPopup) {
+    try { await chrome.action.openPopup(); } catch { /* requires user gesture in some contexts */ }
+  }
+});
+
 chrome.runtime.onStartup?.addListener(() => {
+  ensureContextMenu();
   console.log(LOG_PREFIX, "onStartup");
 });
 
@@ -81,4 +135,4 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 console.log(LOG_PREFIX, "service worker booted");
 
 // Exported for unit-style smoke checks (not used by the SW runtime).
-export const __test__ = { handlers, STORAGE_KEYS };
+export const __test__ = { handlers, STORAGE_KEYS, CONTEXT_MENU_ID, CONTEXT_MENU_TITLE };
