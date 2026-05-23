@@ -361,3 +361,76 @@ body[data-theme="light"] .preview-body { background: rgba(0, 0, 0, 0.04); }
 .btn.primary:hover:not([disabled]) {
   background: linear-gradient(180deg, rgba(124, 92, 255, 0.95), rgba(124, 92, 255, 0.75));
 }
+
+/* Settings panel */
+.settings {
+  position: relative;
+  z-index: 1;
+  margin: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-blurb {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-dim);
+}
+.settings-blurb code {
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--glass-strong);
+  border: 1px solid var(--hairline);
+}
+.token-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--glass-strong);
+  border: 1px solid var(--hairline);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.token-status .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-faint);
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.04);
+  transition: background-color 200ms var(--ease);
+}
+.token-status[data-state="saved"] .status-dot {
+  background: #34d399;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18);
+}
+.token-status[data-state="saved"] {
+  color: var(--fg);
+}
+.input-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg-dim);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background-color 180ms var(--ease), color 180ms var(--ease), border-color 180ms var(--ease);
+}
+.input-btn svg { width: 14px; height: 14px; }
+.input-btn:hover { background: var(--glass-strong); color: var(--fg); border-color: var(--hairline); }
+.input-btn[aria-pressed="true"] { color: var(--accent); }
+.input-wrap { position: relative; }

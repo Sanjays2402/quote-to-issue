@@ -95,3 +95,68 @@ for (const needle of ["> line one", "> line two", "**Source:** [Doc](https://exa
 }
 
 console.log("\u2713 smoke ok");
+
+// --- Token storage (encrypted PAT) ----------------------------------------
+await import("../src/token.js").catch((err) => { console.error("token.js import failed:", err.message); process.exit(1); });
+const tok = globalThis.__qtiToken;
+if (!tok || typeof tok.looksLikeGithubToken !== "function") {
+  console.error("token helpers not exported on globalThis.__qtiToken"); process.exit(1);
+}
+const goodTokens = [
+  "ghp_" + "a".repeat(36),
+  "github_pat_" + "b".repeat(40),
+  "ABCDEF0123456789abcdef0123456789ABCDEF01",
+];
+for (const t of goodTokens) {
+  if (!tok.looksLikeGithubToken(t)) { console.error("looksLikeGithubToken false-negative:", t); process.exit(1); }
+}
+for (const t of ["", "short", "has spaces in it abc", "ghp_short", "!!!notavalid!!!"]) {
+  if (tok.looksLikeGithubToken(t)) { console.error("looksLikeGithubToken false-positive:", t); process.exit(1); }
+}
+const prev = tok.previewToken("ghp_abcdefghijklmnopqrSTUV");
+if (!prev.endsWith("STUV") || prev.includes("a")) { console.error("previewToken bad:", prev); process.exit(1); }
+if (tok.previewToken("") !== "") { console.error("previewToken empty bad"); process.exit(1); }
+
+const mem = new Map();
+globalThis.chrome = {
+  storage: {
+    local: {
+      async get(keys) {
+        const ks = Array.isArray(keys) ? keys : (typeof keys === "string" ? [keys] : Object.keys(keys || {}));
+        const out = {};
+        for (const k of ks) if (mem.has(k)) out[k] = mem.get(k);
+        return out;
+      },
+      async set(obj) { for (const [k, v] of Object.entries(obj)) mem.set(k, v); },
+      async remove(keys) {
+        const ks = Array.isArray(keys) ? keys : [keys];
+        for (const k of ks) mem.delete(k);
+      },
+    },
+  },
+};
+if (typeof globalThis.crypto?.subtle?.encrypt !== "function") {
+  console.error("WebCrypto subtle unavailable in Node — upgrade Node"); process.exit(1);
+}
+const PAT = "ghp_" + "x".repeat(36);
+const saved = await tok.setToken(PAT);
+if (!saved.ok) { console.error("setToken did not report ok"); process.exit(1); }
+if (!(await tok.hasToken())) { console.error("hasToken false after save"); process.exit(1); }
+if ((await tok.getToken()) !== PAT) { console.error("getToken round-trip failed"); process.exit(1); }
+const info = await tok.getTokenInfo();
+if (!info || info.tail !== PAT.slice(-4) || !info.createdAt) { console.error("getTokenInfo bad:", info); process.exit(1); }
+const envRaw = JSON.stringify(mem.get(tok.STORAGE_KEYS.envelope));
+if (envRaw.includes(PAT)) { console.error("envelope leaked plaintext"); process.exit(1); }
+const env = mem.get(tok.STORAGE_KEYS.envelope);
+mem.set(tok.STORAGE_KEYS.envelope, { ...env, ct: "AAAA" + env.ct.slice(4) });
+if ((await tok.getToken()) !== null) { console.error("getToken should return null on tampered ct"); process.exit(1); }
+mem.set(tok.STORAGE_KEYS.envelope, env);
+if ((await tok.getToken()) !== PAT) { console.error("restore failed"); process.exit(1); }
+await tok.clearToken();
+if (await tok.hasToken()) { console.error("hasToken true after clear"); process.exit(1); }
+if ((await tok.getToken()) !== null) { console.error("getToken not null after clear"); process.exit(1); }
+let rejected = false;
+try { await tok.setToken(""); } catch { rejected = true; }
+if (!rejected) { console.error("setToken should reject empty"); process.exit(1); }
+
+console.log("\u2713 token smoke ok");

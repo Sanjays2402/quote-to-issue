@@ -117,6 +117,66 @@
     </section>
   </template>
 
+  <template id="tpl-settings">
+    <section class="settings glass" data-settings>
+      <header class="form-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="10" width="16" height="10" rx="2"></rect>
+            <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+          </svg>
+          <span class="meta-label">GitHub token</span>
+        </div>
+        <button class="icon-btn ghost" data-action="close-settings" title="Close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+          </svg>
+        </button>
+      </header>
+
+      <p class="settings-blurb">Stored encrypted (AES-GCM) in <code>chrome.storage.local</code>. Use a fine-grained PAT scoped to <em>Issues: Read &amp; Write</em>.</p>
+
+      <div class="token-status" data-field="token-status" data-state="empty">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span class="status-text" data-field="token-status-text">No token saved</span>
+      </div>
+
+      <div class="field">
+        <label class="field-label" for="qti-token">Personal access token</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="9" cy="12" r="4"></circle>
+            <path d="M13 12h8"></path><path d="M18 12v3"></path><path d="M21 12v2"></path>
+          </svg>
+          <input id="qti-token" name="token" class="input" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" data-field="token">
+          <button class="input-btn" type="button" data-action="reveal-token" aria-pressed="false" title="Show token" aria-label="Show token">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <p class="field-hint" data-field="token-hint">Token never leaves this machine.</p>
+      </div>
+
+      <footer class="form-actions">
+        <button class="btn ghost" type="button" data-action="clear-token">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+            <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path><path d="M9 7V4h6v3"></path>
+          </svg>
+          <span>Clear</span>
+        </button>
+        <button class="btn primary" type="button" data-action="save-token" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12l4 4 10-10"></path>
+          </svg>
+          <span>Save</span>
+        </button>
+      </footer>
+    </section>
+  </template>
+
   <template id="tpl-quote">
     <section class="quote glass">
       <header class="quote-head">
