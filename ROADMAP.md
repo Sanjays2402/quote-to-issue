@@ -17,3 +17,13 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Dark/light theme
 - [x] Markdown preview pane
 - [x] Auto-link source URL with line/paragraph anchor
+- [ ] Keyboard shortcut to file issue without opening popup
+- [ ] Quick-repo switcher with fuzzy search in popup
+- [ ] Issue title auto-suggestion from selection (first sentence, smart truncate)
+- [ ] Surrounding-context capture (N chars before/after selection) toggle
+- [ ] Author/byline + publish date scraping for news/blog pages
+- [ ] Code block detection: wrap selections from <pre>/<code> as fenced markdown
+- [ ] Recent-issues panel: list last 10 issues filed, click to reopen on GitHub
+- [ ] Per-repo default labels + assignees with chip editor
+- [ ] Settings page with liquid-glass design and token rotation
+- [ ] Offline queue: retry failed POSTs when connectivity returns
