@@ -27,3 +27,13 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Per-repo default labels + assignees with chip editor
 - [x] Settings page with liquid-glass design and token rotation
 - [x] Offline queue: retry failed POSTs when connectivity returns
+- [ ] Duplicate-issue detector: search repo for similar open issues before filing
+- [ ] Issue body templates with variables ({{url}}, {{selection}}, {{title}}, {{date}})
+- [ ] OAuth device-flow login as alternative to PAT
+- [ ] Per-repo issue type picker (bug/feature/question) with matching label presets
+- [ ] Annotated screenshot: draw rectangle/arrow over capture before attaching
+- [ ] Highlighted-selection screenshot mode (mask page, keep selection visible)
+- [ ] Issue success toast with copy-link and open-in-tab actions
+- [ ] Quote history search: full-text search over previously filed quotes
+- [ ] Per-repo milestone picker populated from GitHub API
+- [ ] Privacy mode: scrub query params and auth tokens from captured URLs
