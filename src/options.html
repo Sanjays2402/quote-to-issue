@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quote to Issue — Settings</title>
+<link rel="stylesheet" href="popup.css">
+<link rel="stylesheet" href="options.css">
+</head>
+<body data-theme="dark" class="options-body">
+  <div class="ambient" aria-hidden="true">
+    <span class="blob blob-a"></span>
+    <span class="blob blob-b"></span>
+  </div>
+
+  <main class="options-shell">
+    <header class="options-head glass">
+      <div class="options-brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M7 8h7a4 4 0 0 1 0 8h-2"></path>
+          <path d="M7 8v8"></path>
+          <path d="M17 6l-2 2 2 2"></path>
+        </svg>
+        <div class="options-titleblock">
+          <h1 class="options-title">Quote to Issue</h1>
+          <p class="options-subtitle">Settings &amp; token management</p>
+        </div>
+      </div>
+      <button id="theme-btn" class="icon-btn theme-btn" type="button" data-theme-mode="system" title="Theme: follow system" aria-label="Theme: follow system">
+        <svg class="theme-icon theme-icon-system" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="13" rx="2"></rect>
+          <path d="M8 21h8"></path>
+          <path d="M12 17v4"></path>
+        </svg>
+        <svg class="theme-icon theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2"></path><path d="M12 20v2"></path>
+          <path d="M4.93 4.93l1.41 1.41"></path><path d="M17.66 17.66l1.41 1.41"></path>
+          <path d="M2 12h2"></path><path d="M20 12h2"></path>
+          <path d="M4.93 19.07l1.41-1.41"></path><path d="M17.66 6.34l1.41-1.41"></path>
+        </svg>
+        <svg class="theme-icon theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8z"></path>
+        </svg>
+      </button>
+    </header>
+
+    <section class="options-card glass" aria-labelledby="opt-token-h">
+      <header class="options-card-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="10" width="16" height="10" rx="2"></rect>
+            <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+          </svg>
+          <h2 id="opt-token-h" class="options-card-title">GitHub token</h2>
+        </div>
+        <div class="token-status" data-field="token-status" data-state="empty">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-text" data-field="token-status-text">No token saved</span>
+        </div>
+      </header>
+
+      <p class="settings-blurb">Stored encrypted (AES-GCM, 256-bit) in <code>chrome.storage.local</code>. Use a fine-grained PAT scoped to <em>Issues: Read &amp; Write</em>.</p>
+
+      <div class="field">
+        <label class="field-label" for="opt-token">Personal access token</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="9" cy="12" r="4"></circle>
+            <path d="M13 12h8"></path><path d="M18 12v3"></path><path d="M21 12v2"></path>
+          </svg>
+          <input id="opt-token" class="input" type="password" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" data-field="token">
+          <button class="input-btn" type="button" data-action="reveal-token" aria-pressed="false" title="Show token" aria-label="Show token">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+        <p class="field-hint" data-field="token-hint">Token never leaves this machine.</p>
+      </div>
+
+      <footer class="form-actions options-actions">
+        <button class="btn ghost" type="button" data-action="clear-token" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+            <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path><path d="M9 7V4h6v3"></path>
+          </svg>
+          <span>Clear</span>
+        </button>
+        <button class="btn" type="button" data-action="save-token" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12l4 4 10-10"></path>
+          </svg>
+          <span>Save</span>
+        </button>
+        <button class="btn primary" type="button" data-action="rotate-token" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-3.2-6.9"></path>
+            <path d="M21 4v5h-5"></path>
+          </svg>
+          <span>Rotate</span>
+        </button>
+      </footer>
+    </section>
+
+    <section class="options-card glass" aria-labelledby="opt-rot-h">
+      <header class="options-card-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 7v5l3 2"></path>
+          </svg>
+          <h2 id="opt-rot-h" class="options-card-title">Rotation history</h2>
+        </div>
+        <button class="btn ghost btn-small" type="button" data-action="clear-rotations">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+            <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path>
+          </svg>
+          <span>Clear log</span>
+        </button>
+      </header>
+      <p class="settings-blurb">Only the last four characters of each retired token are kept — enough to verify the rotation happened, never enough to reuse.</p>
+      <div class="rotation-list" data-rotation-list></div>
+      <div class="rotation-empty" data-rotation-empty>
+        <svg viewBox="0 0 160 90" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="80" cy="46" r="28"></circle>
+          <path d="M64 46h32"></path>
+          <path d="M80 30v32"></path>
+        </svg>
+        <p>No rotations yet. Tokens you replace appear here, redacted to the last four characters.</p>
+      </div>
+    </section>
+
+    <footer class="options-foot">
+      <span class="version">Quote to Issue · v0.1.0</span>
+    </footer>
+  </main>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

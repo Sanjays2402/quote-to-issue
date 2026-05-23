@@ -12,7 +12,10 @@
 const STORAGE_KEYS = Object.freeze({
   key: "qti.tokenKey",
   envelope: "qti.tokenEnvelope",
+  rotations: "qti.tokenRotations",
 });
+
+const MAX_ROTATIONS = 8;
 
 const subtle = () => globalThis.crypto?.subtle;
 
@@ -141,6 +144,49 @@ async function getTokenInfo() {
   };
 }
 
+/**
+ * Rotate the saved token: append the old token's tail to a redacted
+ * rotation log, then swap in the new ciphertext envelope. If no prior
+ * token exists this behaves like setToken().
+ */
+async function rotateToken(plain) {
+  if (!globalThis.chrome?.storage?.local) throw new Error("chrome.storage.local unavailable");
+  const t = String(plain || "").trim();
+  if (!t) throw new Error("token is empty");
+  if (!looksLikeGithubToken(t)) throw new Error("token does not look like a GitHub PAT");
+  const prior = await getTokenInfo().catch(() => null);
+  const current = await getToken().catch(() => null);
+  if (current && current === t) {
+    throw new Error("new token matches the saved token");
+  }
+  const out = await chrome.storage.local.get(STORAGE_KEYS.rotations);
+  const log = Array.isArray(out[STORAGE_KEYS.rotations]) ? out[STORAGE_KEYS.rotations].slice() : [];
+  if (prior) {
+    log.unshift({
+      retiredAt: new Date().toISOString(),
+      createdAt: prior.createdAt || null,
+      tail: prior.tail || "",
+      alg: prior.alg || "AES-GCM",
+    });
+  }
+  while (log.length > MAX_ROTATIONS) log.pop();
+  await chrome.storage.local.set({ [STORAGE_KEYS.rotations]: log });
+  return setToken(t);
+}
+
+async function getRotationHistory() {
+  if (!globalThis.chrome?.storage?.local) return [];
+  const out = await chrome.storage.local.get(STORAGE_KEYS.rotations);
+  const log = out[STORAGE_KEYS.rotations];
+  return Array.isArray(log) ? log.slice(0, MAX_ROTATIONS) : [];
+}
+
+async function clearRotationHistory() {
+  if (!globalThis.chrome?.storage?.local) return { ok: false };
+  await chrome.storage.local.remove(STORAGE_KEYS.rotations);
+  return { ok: true };
+}
+
 async function clearToken() {
   if (!globalThis.chrome?.storage?.local) return { ok: false };
   await chrome.storage.local.remove(STORAGE_KEYS.envelope);
@@ -149,6 +195,7 @@ async function clearToken() {
 
 export {
   STORAGE_KEYS,
+  MAX_ROTATIONS,
   looksLikeGithubToken,
   previewToken,
   setToken,
@@ -156,11 +203,15 @@ export {
   hasToken,
   clearToken,
   getTokenInfo,
+  rotateToken,
+  getRotationHistory,
+  clearRotationHistory,
 };
 
 if (typeof globalThis !== "undefined") {
   globalThis.__qtiToken = {
     STORAGE_KEYS,
+    MAX_ROTATIONS,
     looksLikeGithubToken,
     previewToken,
     setToken,
@@ -168,5 +219,8 @@ if (typeof globalThis !== "undefined") {
     hasToken,
     clearToken,
     getTokenInfo,
+    rotateToken,
+    getRotationHistory,
+    clearRotationHistory,
   };
 }

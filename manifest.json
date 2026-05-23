@@ -12,6 +12,10 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "options_ui": {
+    "page": "src/options.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_popup": "src/popup.html",
     "default_title": "Quote to Issue",

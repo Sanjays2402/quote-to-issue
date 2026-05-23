@@ -558,3 +558,75 @@ for (const needle of ["assignees", "msg?.assignees"]) {
   if (!swD.includes(needle)) { console.error("background.js missing assignees token:", needle); process.exit(1); }
 }
 console.log("\u2713 repo-defaults smoke ok");
+
+// --- Settings page + token rotation --------------------------------------
+for (const p of ["src/options.html", "src/options.css", "src/options.js"]) {
+  if (!fs.existsSync(p)) { console.error("missing file:", p); process.exit(1); }
+}
+if (!m.options_ui || m.options_ui.page !== "src/options.html") {
+  console.error("manifest.options_ui.page must be src/options.html"); process.exit(1);
+}
+if (m.options_ui.open_in_tab !== true) {
+  console.error("manifest.options_ui.open_in_tab must be true"); process.exit(1);
+}
+const optHtml = fs.readFileSync("src/options.html", "utf8");
+for (const needle of [
+  'class="options-shell"', 'data-field="token"', 'data-action="save-token"',
+  'data-action="clear-token"', 'data-action="rotate-token"', 'data-action="reveal-token"',
+  'data-action="clear-rotations"', 'data-rotation-list', 'data-rotation-empty',
+  'data-field="token-status"', 'data-field="token-status-text"', 'data-field="token-hint"',
+  'src="options.js"', 'href="options.css"',
+]) {
+  if (!optHtml.includes(needle)) { console.error("options.html missing token:", needle); process.exit(1); }
+}
+const optCss = fs.readFileSync("src/options.css", "utf8");
+for (const needle of [".options-shell", ".options-head", ".options-card", ".rotation-row", ".rotation-tail", ".rotation-empty"]) {
+  if (!optCss.includes(needle)) { console.error("options.css missing token:", needle); process.exit(1); }
+}
+const optJs = fs.readFileSync("src/options.js", "utf8");
+for (const needle of ["rotateToken", "getRotationHistory", "clearRotationHistory", "refreshRotations", "refreshTokenStatus"]) {
+  if (!optJs.includes(needle)) { console.error("options.js missing token:", needle); process.exit(1); }
+}
+
+// Functional: rotateToken logs old tail, keeps current PAT working, and caps at MAX_ROTATIONS.
+const tok2 = globalThis.__qtiToken;
+if (typeof tok2.rotateToken !== "function") { console.error("token.rotateToken missing"); process.exit(1); }
+if (typeof tok2.MAX_ROTATIONS !== "number" || tok2.MAX_ROTATIONS < 4) { console.error("MAX_ROTATIONS invalid"); process.exit(1); }
+if ((await tok2.getRotationHistory()).length !== 0) { console.error("rotation log should start empty"); process.exit(1); }
+// rotate when no prior token == set
+const T1 = "ghp_" + "1".repeat(36);
+await tok2.rotateToken(T1);
+if ((await tok2.getToken()) !== T1) { console.error("rotateToken initial set failed"); process.exit(1); }
+if ((await tok2.getRotationHistory()).length !== 0) { console.error("first rotation should not log"); process.exit(1); }
+// rotate to a new token: old tail logged
+const T2 = "ghp_" + "2".repeat(36);
+await tok2.rotateToken(T2);
+const log1 = await tok2.getRotationHistory();
+if (log1.length !== 1) { console.error("rotation log should have 1:", log1); process.exit(1); }
+if (log1[0].tail !== "1111") { console.error("rotation log tail wrong:", log1[0]); process.exit(1); }
+if (!log1[0].retiredAt) { console.error("rotation log missing retiredAt"); process.exit(1); }
+if ((await tok2.getToken()) !== T2) { console.error("rotateToken new token round-trip failed"); process.exit(1); }
+// rotating to the same token should reject
+let sameRej = false;
+try { await tok2.rotateToken(T2); } catch { sameRej = true; }
+if (!sameRej) { console.error("rotateToken should reject same token"); process.exit(1); }
+// invalid token should reject
+let badRej = false;
+try { await tok2.rotateToken("junk"); } catch { badRej = true; }
+if (!badRej) { console.error("rotateToken should reject invalid token"); process.exit(1); }
+// rotation cap
+for (let i = 3; i < tok2.MAX_ROTATIONS + 5; i++) {
+  const Tn = "ghp_" + String(i).padStart(2, "0").repeat(18);
+  await tok2.rotateToken(Tn);
+}
+const logFinal = await tok2.getRotationHistory();
+if (logFinal.length !== tok2.MAX_ROTATIONS) { console.error("rotation log not capped:", logFinal.length); process.exit(1); }
+// newest first
+if (Date.parse(logFinal[0].retiredAt) < Date.parse(logFinal[logFinal.length - 1].retiredAt)) {
+  console.error("rotation log not newest-first"); process.exit(1);
+}
+// clear
+await tok2.clearRotationHistory();
+if ((await tok2.getRotationHistory()).length !== 0) { console.error("clearRotationHistory failed"); process.exit(1); }
+await tok2.clearToken();
+console.log("\u2713 settings-rotation smoke ok");
