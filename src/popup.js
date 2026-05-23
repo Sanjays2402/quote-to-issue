@@ -14,7 +14,11 @@ const STORAGE_KEYS = Object.freeze({
   pendingQuote: "qti.pendingQuote",
   formState: "qti.formState",
   recentRepos: "qti.recentRepos",
+  repoTemplates: "qti.repoTemplates",
 });
+
+const MAX_TEMPLATE_LEN = 8000;
+const DEFAULT_TEMPLATE = `## Summary\n\n\n## Quote\n\n{{quote_blockquote}}\n\n## Source\n\n- **Page:** [{{source_title}}]({{source_url}})\n- **Section:** {{section}}\n- **Captured:** {{captured}}\n\n{{screenshot_note}}\n`;
 
 const MAX_RECENT_REPOS = 8;
 
@@ -150,6 +154,101 @@ function normalizeRecentRepos(list) {
   return out.slice(0, MAX_RECENT_REPOS);
 }
 
+// ---------------------------------------------------------------------------
+// Per-repo issue templates
+// ---------------------------------------------------------------------------
+
+function repoKey(repo) {
+  const parsed = parseRepo(repo);
+  return parsed.ok ? parsed.value.toLowerCase() : "";
+}
+
+function normalizeRepoTemplates(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const key = repoKey(k);
+    if (!key) continue;
+    if (!v || typeof v !== "object") continue;
+    const body = typeof v.body === "string" ? v.body.slice(0, MAX_TEMPLATE_LEN) : "";
+    if (!body.trim()) continue;
+    const updatedAt = typeof v.updatedAt === "string" ? v.updatedAt : new Date().toISOString();
+    out[key] = { body, updatedAt };
+  }
+  return out;
+}
+
+async function getAllRepoTemplates() {
+  if (!chrome?.storage?.local) return {};
+  const out = await chrome.storage.local.get(STORAGE_KEYS.repoTemplates);
+  return normalizeRepoTemplates(out[STORAGE_KEYS.repoTemplates]);
+}
+
+async function getRepoTemplate(repo) {
+  const key = repoKey(repo);
+  if (!key) return null;
+  const all = await getAllRepoTemplates();
+  return all[key] || null;
+}
+
+async function setRepoTemplate(repo, body) {
+  const key = repoKey(repo);
+  if (!key) throw new Error("Invalid repo");
+  const text = String(body || "").trim();
+  if (!text) throw new Error("Template body required");
+  const all = await getAllRepoTemplates();
+  all[key] = { body: text.slice(0, MAX_TEMPLATE_LEN), updatedAt: new Date().toISOString() };
+  await chrome.storage.local.set({ [STORAGE_KEYS.repoTemplates]: all });
+  return all[key];
+}
+
+async function clearRepoTemplate(repo) {
+  const key = repoKey(repo);
+  if (!key) return;
+  const all = await getAllRepoTemplates();
+  if (!all[key]) return;
+  delete all[key];
+  await chrome.storage.local.set({ [STORAGE_KEYS.repoTemplates]: all });
+}
+
+/**
+ * Substitute `{{var}}` placeholders in a template with values derived from the
+ * captured quote. Unknown placeholders are left intact so the user notices.
+ */
+function renderTemplate(tmpl, q) {
+  const t = String(tmpl || "");
+  if (!t) return "";
+  const quoted = (q?.selectionText || "").trim();
+  const quoteBlock = quoted ? quoted.split(/\r?\n/).map((ln) => "> " + ln).join("\n") : "";
+  const sourceTitle = q?.pageTitle || hostnameOf(q?.pageUrl) || q?.pageUrl || "";
+  const sourceUrl = q?.pageUrl || "";
+  const section = q?.nearestHeading || "";
+  const captured = q?.capturedAt || "";
+  const ctxBefore = (q?.contextBefore || "").trim();
+  const ctxAfter = (q?.contextAfter || "").trim();
+  let screenshotNote = "";
+  if (q?.screenshot?.dataUrl) {
+    const dim = (q.screenshot.width && q.screenshot.height) ? `${q.screenshot.width}\u00d7${q.screenshot.height}` : "PNG";
+    screenshotNote = `**Screenshot:** captured (${dim}) — paste from clipboard or attach the downloaded PNG when filing.`;
+  }
+  const vars = {
+    quote: quoted,
+    quote_blockquote: quoteBlock,
+    source_title: sourceTitle,
+    source_url: sourceUrl,
+    section,
+    captured,
+    context_before: ctxBefore,
+    context_after: ctxAfter,
+    screenshot_note: screenshotNote,
+    host: hostnameOf(q?.pageUrl),
+  };
+  return t.replace(/\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}/gi, (m, name) => {
+    const v = vars[String(name).toLowerCase()];
+    return v == null ? m : String(v);
+  });
+}
+
 function filterRecentRepos(recents, query) {
   const q = String(query || "").trim().toLowerCase();
   if (!q) return recents.slice();
@@ -199,7 +298,11 @@ async function dataUrlToBlob(dataUrl) {
 
 // expose for tests
 if (typeof globalThis !== "undefined") {
-  globalThis.__qti = { parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename, formatBytes, normalizeRecentRepos, filterRecentRepos };
+  globalThis.__qti = {
+    parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename,
+    formatBytes, normalizeRecentRepos, filterRecentRepos,
+    normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +441,19 @@ function buildFormNode(q, state) {
   const submitBtn = node.querySelector('[data-action="submit"]');
   const recentsBtn = node.querySelector('[data-action="toggle-recents"]');
   const recentsPanel = node.querySelector('[data-field="repo-recents"]');
+  const tmplBlock = node.querySelector("[data-template-block]");
+  const tmplToggle = node.querySelector('[data-action="toggle-template"]');
+  const tmplBody = node.querySelector('[data-field="template-body"]');
+  const tmplHint = node.querySelector('[data-field="template-hint"]');
+  const tmplSave = node.querySelector('[data-action="save-template"]');
+  const tmplClear = node.querySelector('[data-action="clear-template"]');
+  const tmplDefault = node.querySelector('[data-action="insert-default-template"]');
+  const tmplStatus = node.querySelector('[data-field="template-status"]');
+
+  // Per-repo template state, refreshed whenever the repo field changes.
+  let activeTemplate = null;
+  let tmplOpen = false;
+  let tmplDirty = false;
 
   // Recent repos dropdown state (cached and re-rendered on demand).
   let recents = [];
@@ -447,6 +563,119 @@ function buildFormNode(q, state) {
   renderLabelChips(chipRow, parseLabels(labelsInput.value));
   previewBody.textContent = buildMarkdownBody(q);
 
+  function effectiveBody() {
+    return activeTemplate && activeTemplate.body
+      ? renderTemplate(activeTemplate.body, q)
+      : buildMarkdownBody(q);
+  }
+
+  function refreshPreviewIfOpen() {
+    if (!previewBox.hidden) previewBody.textContent = effectiveBody();
+  }
+
+  function refreshTemplateStatus() {
+    if (!tmplStatus) return;
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) {
+      tmplStatus.textContent = "Enter a repo to manage its template.";
+      tmplStatus.dataset.state = "empty";
+      if (tmplSave) tmplSave.disabled = true;
+      if (tmplClear) tmplClear.disabled = true;
+      return;
+    }
+    if (activeTemplate) {
+      tmplStatus.dataset.state = "saved";
+      tmplStatus.textContent = `Using template for ${repoParsed.value} \u00b7 saved ${fmtRelative(activeTemplate.updatedAt)}`;
+      if (tmplClear) tmplClear.disabled = false;
+    } else {
+      tmplStatus.dataset.state = "empty";
+      tmplStatus.textContent = `No template for ${repoParsed.value}. Default body in use.`;
+      if (tmplClear) tmplClear.disabled = true;
+    }
+    if (tmplSave) tmplSave.disabled = !tmplDirty || !tmplBody?.value.trim();
+  }
+
+  async function loadTemplateForRepo() {
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) {
+      activeTemplate = null;
+      if (tmplBody) tmplBody.value = "";
+      tmplDirty = false;
+      refreshTemplateStatus();
+      refreshPreviewIfOpen();
+      return;
+    }
+    activeTemplate = await getRepoTemplate(repoParsed.value).catch(() => null);
+    if (tmplBody) {
+      tmplBody.value = activeTemplate?.body || "";
+      tmplDirty = false;
+    }
+    refreshTemplateStatus();
+    refreshPreviewIfOpen();
+  }
+
+  tmplToggle?.addEventListener("click", (e) => {
+    e.preventDefault();
+    tmplOpen = !tmplOpen;
+    if (tmplBlock) tmplBlock.hidden = !tmplOpen;
+    tmplToggle.setAttribute("aria-expanded", String(tmplOpen));
+  });
+  tmplBody?.addEventListener("input", () => {
+    tmplDirty = (tmplBody.value || "") !== (activeTemplate?.body || "");
+    if (tmplHint) {
+      const remaining = MAX_TEMPLATE_LEN - tmplBody.value.length;
+      tmplHint.textContent = remaining < 500
+        ? `${remaining} characters left`
+        : "Placeholders: {{quote}}, {{quote_blockquote}}, {{source_title}}, {{source_url}}, {{section}}, {{captured}}, {{screenshot_note}}.";
+      tmplHint.classList.remove("error");
+    }
+    refreshTemplateStatus();
+  });
+  tmplDefault?.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (!tmplBody) return;
+    tmplBody.value = DEFAULT_TEMPLATE;
+    tmplBody.dispatchEvent(new Event("input", { bubbles: true }));
+    tmplBody.focus();
+  });
+  tmplSave?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok || !tmplBody) return;
+    tmplSave.disabled = true;
+    try {
+      activeTemplate = await setRepoTemplate(repoParsed.value, tmplBody.value);
+      tmplDirty = false;
+      if (tmplHint) {
+        tmplHint.textContent = "Template saved.";
+        tmplHint.classList.remove("error");
+      }
+      refreshTemplateStatus();
+      refreshPreviewIfOpen();
+    } catch (err) {
+      if (tmplHint) {
+        tmplHint.textContent = `Save failed: ${err?.message || err}`;
+        tmplHint.classList.add("error");
+      }
+      tmplSave.disabled = false;
+    }
+  });
+  tmplClear?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) return;
+    await clearRepoTemplate(repoParsed.value).catch(() => {});
+    activeTemplate = null;
+    if (tmplBody) tmplBody.value = "";
+    tmplDirty = false;
+    if (tmplHint) {
+      tmplHint.textContent = "Template cleared. Default body restored.";
+      tmplHint.classList.remove("error");
+    }
+    refreshTemplateStatus();
+    refreshPreviewIfOpen();
+  });
+
   const validateRepo = () => {
     const r = parseRepo(repoInput.value);
     repoInput.setAttribute("aria-invalid", r.value && !r.ok ? "true" : "false");
@@ -464,6 +693,7 @@ function buildFormNode(q, state) {
   };
 
   validateRepo();
+  loadTemplateForRepo();
 
   repoInput.addEventListener("input", () => {
     validateRepo();
@@ -471,6 +701,7 @@ function buildFormNode(q, state) {
     activeRecentIndex = -1;
     if (recentsOpen) renderRecentsList();
     else if (recents.length > 0 && document.activeElement === repoInput) openRecents();
+    loadTemplateForRepo();
   });
   repoInput.addEventListener("focus", () => {
     if (recents.length > 0) openRecents();
@@ -524,7 +755,7 @@ function buildFormNode(q, state) {
     const shown = !previewBox.hidden;
     previewBox.hidden = shown;
     toggleBtn.setAttribute("aria-pressed", String(!shown));
-    if (!shown) previewBody.textContent = buildMarkdownBody(q);
+    if (!shown) previewBody.textContent = effectiveBody();
   });
 
   submitBtn.title = "Create a GitHub issue with the captured quote";
@@ -558,7 +789,7 @@ function buildFormNode(q, state) {
         type: "submitIssue",
         repo: repo.value,
         title,
-        body: buildMarkdownBody(q),
+        body: effectiveBody(),
         labels: parseLabels(labelsInput.value),
       });
       if (!reply?.ok) throw new Error(reply?.error || "Unknown error");

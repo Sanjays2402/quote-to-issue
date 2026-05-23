@@ -108,6 +108,38 @@
         <div class="chip-row" data-field="label-chips"></div>
       </div>
 
+      <div class="field">
+        <div class="template-head">
+          <button class="chip-toggle template-toggle" type="button" data-action="toggle-template" aria-expanded="false" title="Issue template for this repo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="4" y="3" width="16" height="18" rx="3"></rect>
+              <path d="M8 8h8"></path><path d="M8 12h8"></path><path d="M8 16h5"></path>
+            </svg>
+            <span>Template</span>
+            <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          </button>
+          <span class="template-status" data-field="template-status" data-state="empty">Enter a repo to manage its template.</span>
+        </div>
+        <div class="template-block" data-template-block hidden>
+          <textarea class="input template-body" data-field="template-body" rows="7" spellcheck="false" placeholder="Issue body template for this repo. Use {{quote_blockquote}}, {{source_url}}, etc." maxlength="8000"></textarea>
+          <p class="field-hint" data-field="template-hint">Placeholders: {{quote}}, {{quote_blockquote}}, {{source_title}}, {{source_url}}, {{section}}, {{captured}}, {{screenshot_note}}.</p>
+          <div class="template-actions">
+            <button class="btn ghost btn-sm" type="button" data-action="insert-default-template" title="Insert default template">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16"></path><path d="M12 4v16"></path></svg>
+              <span>Default</span>
+            </button>
+            <button class="btn ghost btn-sm" type="button" data-action="clear-template" disabled title="Remove template for this repo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path></svg>
+              <span>Remove</span>
+            </button>
+            <button class="btn primary btn-sm" type="button" data-action="save-template" disabled title="Save template for this repo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l4 4 10-10"></path></svg>
+              <span>Save template</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div class="preview" data-preview hidden>
         <span class="context-label">Body preview</span>
         <pre class="preview-body" data-field="preview-body"></pre>

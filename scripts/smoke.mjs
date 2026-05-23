@@ -63,6 +63,13 @@ for (const needle of [
   'data-action="toggle-recents"',
   'data-field="repo-recents"',
   'role="combobox"',
+  'data-action="toggle-template"',
+  'data-template-block',
+  'data-field="template-body"',
+  'data-field="template-status"',
+  'data-action="save-template"',
+  'data-action="clear-template"',
+  'data-action="insert-default-template"',
 ]) {
   if (!popupHtml.includes(needle)) { console.error("popup.html missing token:", needle); process.exit(1); }
 }
@@ -81,12 +88,20 @@ for (const needle of [
   "addRecentRepo",
   "removeRecentRepo",
   "qti.recentRepos",
+  "normalizeRepoTemplates",
+  "renderTemplate",
+  "DEFAULT_TEMPLATE",
+  "MAX_TEMPLATE_LEN",
+  "getRepoTemplate",
+  "setRepoTemplate",
+  "clearRepoTemplate",
+  "qti.repoTemplates",
 ]) {
   if (!popupJs.includes(needle)) { console.error("popup.js missing token:", needle); process.exit(1); }
 }
 
 const popupCss = fs.readFileSync("src/popup.css", "utf8");
-for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn", ".repo-recents", ".repo-recent"]) {
+for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn", ".repo-recents", ".repo-recent", ".template-body", ".template-block", ".template-actions"]) {
   if (!popupCss.includes(needle)) { console.error("popup.css missing token:", needle); process.exit(1); }
 }
 
@@ -143,6 +158,33 @@ if (normalizeRecentRepos("not-an-array").length !== 0) { console.error("normaliz
 const filtered = filterRecentRepos(normed, "react");
 if (filtered.length !== 1 || filtered[0].value !== "facebook/react") { console.error("filterRecentRepos bad:", filtered); process.exit(1); }
 if (filterRecentRepos(normed, "").length !== 2) { console.error("filterRecentRepos empty query should return all"); process.exit(1); }
+
+// Per-repo templates: normalization, placeholder rendering
+const { normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE } = globalThis.__qti;
+if (typeof normalizeRepoTemplates !== "function") { console.error("normalizeRepoTemplates missing"); process.exit(1); }
+const rawT = {
+  "vercel/next.js": { body: "hello {{quote}}", updatedAt: "2026-05-20T10:00:00Z" },
+  "VERCEL/Next.JS": { body: "override", updatedAt: "2026-05-22T10:00:00Z" }, // dedupe via lowercase key
+  "bad-input": { body: "x" },
+  "empty/repo": { body: "   " }, // dropped (empty after trim)
+};
+const normT = normalizeRepoTemplates(rawT);
+const keys = Object.keys(normT);
+if (keys.length !== 1 || keys[0] !== "vercel/next.js") { console.error("normalizeRepoTemplates keys wrong:", keys); process.exit(1); }
+if (!normT["vercel/next.js"].updatedAt) { console.error("normalizeRepoTemplates lost updatedAt"); process.exit(1); }
+if (normalizeRepoTemplates(null) && Object.keys(normalizeRepoTemplates(null)).length !== 0) { console.error("normalizeRepoTemplates(null) should be empty"); process.exit(1); }
+if (typeof DEFAULT_TEMPLATE !== "string" || !DEFAULT_TEMPLATE.includes("{{quote_blockquote}}")) { console.error("DEFAULT_TEMPLATE invalid"); process.exit(1); }
+const rendered = renderTemplate(
+  "Title: {{source_title}}\nURL: {{source_url}}\n{{quote_blockquote}}\nSection: {{section}}\n{{unknown_token}}",
+  { selectionText: "line one\nline two", pageTitle: "Doc", pageUrl: "https://example.com/p", nearestHeading: "Intro", capturedAt: "2026-05-23T10:00:00Z" },
+);
+if (!rendered.includes("Title: Doc")) { console.error("renderTemplate source_title:", rendered); process.exit(1); }
+if (!rendered.includes("URL: https://example.com/p")) { console.error("renderTemplate source_url:", rendered); process.exit(1); }
+if (!rendered.includes("> line one") || !rendered.includes("> line two")) { console.error("renderTemplate quote_blockquote:", rendered); process.exit(1); }
+if (!rendered.includes("Section: Intro")) { console.error("renderTemplate section:", rendered); process.exit(1); }
+if (!rendered.includes("{{unknown_token}}")) { console.error("renderTemplate unknown placeholders should remain"); process.exit(1); }
+if (renderTemplate("", { selectionText: "x" }) !== "") { console.error("renderTemplate empty input should be empty"); process.exit(1); }
+
 const bodyShot = buildMarkdownBody({
   selectionText: "hi",
   pageTitle: "D", pageUrl: "https://e.com",
