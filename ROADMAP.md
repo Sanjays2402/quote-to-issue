@@ -37,7 +37,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Quote history search: full-text search over previously filed quotes
 - [x] Per-repo milestone picker populated from GitHub API
 - [x] Privacy mode: scrub query params and auth tokens from captured URLs
-- [ ] Selection language detection + auto-tag issue with language label
+- [x] Selection language detection + auto-tag issue with language label
 - [ ] Slash-command palette in popup (Cmd+K) for repo/label/template actions
 - [ ] Convert selection to task-list checkboxes when bullet patterns detected
 - [ ] Auto-mention reviewers based on CODEOWNERS file fetched from repo

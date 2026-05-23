@@ -83,7 +83,7 @@ function rankDuplicates(items, tokens) {
 // ---------------------------------------------------------------------------
 const CONTEXT_RADIUS_MIN = 0;
 const CONTEXT_RADIUS_MAX = 600;
-const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false, privacyMode: false });
+const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false, privacyMode: false, languageLabelEnabled: true });
 
 function normalizeCaptureSettings(raw) {
   const out = { ...DEFAULT_CAPTURE_SETTINGS };
@@ -96,6 +96,79 @@ function normalizeCaptureSettings(raw) {
   if (!out.contextEnabled) out.contextRadius = 0;
   if (typeof raw.highlightMode === "boolean") out.highlightMode = raw.highlightMode;
   if (typeof raw.privacyMode === "boolean") out.privacyMode = raw.privacyMode;
+  if (typeof raw.languageLabelEnabled === "boolean") out.languageLabelEnabled = raw.languageLabelEnabled;
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Selection language detection — script-based for non-Latin, common-word
+// frequency for Latin. Returns ISO 639-1 code or null. Used to auto-tag the
+// issue form with a `lang:<code>` label when the toggle is enabled.
+// ---------------------------------------------------------------------------
+const LANGUAGE_LABEL_PREFIX = "lang:";
+const LANG_KNOWN_CODES = Object.freeze([
+  "en","es","fr","de","it","pt","nl",
+  "ja","zh","ko","ru","ar","he","el","th","hi",
+]);
+const LATIN_WORD_LISTS = Object.freeze({
+  en: ["the","and","of","to","is","in","that","it","you","for","on","with","as","this","be","are","at","or","by","from","but","not","have","was"],
+  es: ["el","la","los","las","de","que","y","en","un","una","es","por","para","con","del","se","al","como","pero","más","este","esta"],
+  fr: ["le","la","les","de","du","des","et","est","un","une","pour","que","dans","avec","sur","par","ne","pas","qui","vous","nous","ce"],
+  de: ["der","die","das","und","ist","ein","eine","den","von","mit","nicht","auf","auch","zu","sich","im","für","dem","als","sind","oder"],
+  it: ["il","lo","la","di","che","un","una","per","con","del","non","da","in","sono","ma","si","al","come","questo","anche"],
+  pt: ["o","a","de","que","e","do","da","em","um","uma","para","com","não","os","as","por","mais","como","mas","foi"],
+  nl: ["de","het","een","en","van","is","in","op","te","dat","niet","met","zijn","voor","aan","door","maar","ook","als"],
+});
+
+function detectSelectionLanguage(text) {
+  const s = String(text || "").trim();
+  if (s.length < 8) return null;
+  const sample = s.slice(0, 600);
+  // Script-based shortcuts (kana > hangul > arabic > devanagari/hebrew/thai/greek/cyrillic > han).
+  if (/[\u3040-\u309f\u30a0-\u30ff]/.test(sample)) return "ja";
+  if (/[\uac00-\ud7af]/.test(sample)) return "ko";
+  if (/[\u0600-\u06ff]/.test(sample)) return "ar";
+  if (/[\u0590-\u05ff]/.test(sample)) return "he";
+  if (/[\u0900-\u097f]/.test(sample)) return "hi";
+  if (/[\u0e00-\u0e7f]/.test(sample)) return "th";
+  if (/[\u0370-\u03ff]/.test(sample)) return "el";
+  if (/[\u0400-\u04ff]/.test(sample)) return "ru";
+  if (/[\u4e00-\u9fff]/.test(sample)) return "zh";
+  // Latin script: common-word frequency vote.
+  const lc = sample.toLowerCase();
+  if (!/[a-z]/i.test(lc)) return null;
+  const words = lc.match(/[a-zà-ÿœæß']+/g) || [];
+  if (words.length < 3) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const [code, list] of Object.entries(LATIN_WORD_LISTS)) {
+    const set = new Set(list);
+    let score = 0;
+    for (const w of words) if (set.has(w)) score++;
+    if (score > bestScore) { bestScore = score; best = code; }
+  }
+  // Need at least two function-word hits to claim a Latin language.
+  if (bestScore < 2) return null;
+  return best;
+}
+
+function languageLabelFor(code) {
+  if (!code || typeof code !== "string") return "";
+  const norm = code.trim().toLowerCase();
+  if (!LANG_KNOWN_CODES.includes(norm)) return "";
+  return `${LANGUAGE_LABEL_PREFIX}${norm}`;
+}
+
+function mergeLanguageLabel(existingLabels, code) {
+  const label = languageLabelFor(code);
+  if (!label) return existingLabels.slice();
+  const out = existingLabels.slice();
+  const lowered = out.map((l) => l.toLowerCase());
+  // Drop any pre-existing lang:* labels so we never stack en + es on a single issue.
+  for (let i = lowered.length - 1; i >= 0; i--) {
+    if (lowered[i].startsWith(LANGUAGE_LABEL_PREFIX)) out.splice(i, 1);
+  }
+  out.push(label);
   return out;
 }
 
@@ -1538,6 +1611,8 @@ if (typeof globalThis !== "undefined") {
     CONTEXT_RADIUS_MIN, CONTEXT_RADIUS_MAX,
     scrubUrlForPrivacy, scrubAuthParamsOnly, applyPrivacyToQuote,
     PRIVACY_AUTH_PARAM_RE, PRIVACY_TRACKING_PARAM_RE,
+    detectSelectionLanguage, languageLabelFor, mergeLanguageLabel,
+    LANGUAGE_LABEL_PREFIX, LANG_KNOWN_CODES,
   };
 }
 
@@ -2120,6 +2195,27 @@ function buildFormNode(q, state) {
   titleInput.value = state.title || deriveTitle(q);
   labelsInput.value = state.labels || "";
   if (assigneesInput) assigneesInput.value = state.assignees || "";
+  // Auto-tag with detected selection language (lang:<code>) when enabled.
+  // Only fires on fresh form state (no prior saved labels) so user edits stick.
+  if (!state.labels) {
+    getCaptureSettings()
+      .then((s) => {
+        if (!s.languageLabelEnabled) return;
+        const code = detectSelectionLanguage(q?.selectionText || "");
+        if (!code) return;
+        const cur = parseLabels(labelsInput.value);
+        const merged = mergeLanguageLabel(cur, code);
+        if (merged.join(",").toLowerCase() === cur.join(",").toLowerCase()) return;
+        labelsInput.value = merged.join(", ");
+        renderLabelChips(chipRow, parseLabels(labelsInput.value), (val) => {
+          const next = parseLabels(labelsInput.value).filter((x) => x !== val);
+          labelsInput.value = next.join(", ");
+          labelsInput.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        saveFormState({ labels: labelsInput.value });
+      })
+      .catch(() => {});
+  }
   renderLabelChips(chipRow, parseLabels(labelsInput.value), (val) => {
     const next = parseLabels(labelsInput.value).filter((x) => x !== val);
     labelsInput.value = next.join(", ");
@@ -3076,6 +3172,8 @@ async function renderSettings() {
   const highlightToggleLabel = node.querySelector('[data-field="highlight-toggle-label"]');
   const privacyToggleBtn = node.querySelector('[data-action="toggle-privacy"]');
   const privacyToggleLabel = node.querySelector('[data-field="privacy-toggle-label"]');
+  const languageToggleBtn = node.querySelector('[data-action="toggle-language"]');
+  const languageToggleLabel = node.querySelector('[data-field="language-toggle-label"]');
 
   async function refreshStatus() {
     const info = await getTokenInfo().catch(() => null);
@@ -3217,6 +3315,21 @@ async function renderSettings() {
     privacyToggleBtn.addEventListener("click", async () => {
       const next = await setCaptureSettings({ privacyMode: privacyToggleBtn.getAttribute("aria-pressed") !== "true" });
       applyPr(next.privacyMode);
+    });
+  }
+
+  // Language-label wiring — when on, the popup auto-tags the issue form with
+  // a lang:<code> label inferred from the selection text.
+  if (languageToggleBtn) {
+    const cur = await getCaptureSettings();
+    const applyLang = (on) => {
+      languageToggleBtn.setAttribute("aria-pressed", String(!!on));
+      if (languageToggleLabel) languageToggleLabel.textContent = on ? "On" : "Off";
+    };
+    applyLang(!!cur.languageLabelEnabled);
+    languageToggleBtn.addEventListener("click", async () => {
+      const next = await setCaptureSettings({ languageLabelEnabled: languageToggleBtn.getAttribute("aria-pressed") !== "true" });
+      applyLang(next.languageLabelEnabled);
     });
   }
 

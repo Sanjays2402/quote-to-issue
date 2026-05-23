@@ -1015,3 +1015,46 @@ if (!aliasOut.includes("D=2026-05-23")) { console.error("alias {{date}} failed:"
 const aliasFallback = renderTemplate("U={{url}}", { selectionText: "", pageUrl: "https://example.com/p" });
 if (aliasFallback !== "U=https://example.com/p") { console.error("alias {{url}} fallback wrong:", aliasFallback); process.exit(1); }
 console.log("\u2713 template-aliases smoke ok");
+
+// --- Selection language detection + auto-label --------------------------
+const { detectSelectionLanguage, languageLabelFor, mergeLanguageLabel, LANGUAGE_LABEL_PREFIX, LANG_KNOWN_CODES } = globalThis.__qti;
+if (typeof detectSelectionLanguage !== "function") { console.error("detectSelectionLanguage missing"); process.exit(1); }
+if (typeof languageLabelFor !== "function") { console.error("languageLabelFor missing"); process.exit(1); }
+if (typeof mergeLanguageLabel !== "function") { console.error("mergeLanguageLabel missing"); process.exit(1); }
+if (LANGUAGE_LABEL_PREFIX !== "lang:") { console.error("LANGUAGE_LABEL_PREFIX wrong:", LANGUAGE_LABEL_PREFIX); process.exit(1); }
+if (!Array.isArray(LANG_KNOWN_CODES) || !LANG_KNOWN_CODES.includes("en")) { console.error("LANG_KNOWN_CODES missing en"); process.exit(1); }
+if (detectSelectionLanguage("") !== null) { console.error("detect empty"); process.exit(1); }
+if (detectSelectionLanguage("hi") !== null) { console.error("detect too-short"); process.exit(1); }
+if (detectSelectionLanguage("The quick brown fox jumps over the lazy dog and runs") !== "en") { console.error("detect english"); process.exit(1); }
+if (detectSelectionLanguage("こんにちは、世界。これはテストです") !== "ja") { console.error("detect japanese"); process.exit(1); }
+if (detectSelectionLanguage("Доброе утро мир") !== "ru") { console.error("detect russian"); process.exit(1); }
+if (detectSelectionLanguage("你好世界这是中文测试") !== "zh") { console.error("detect chinese"); process.exit(1); }
+if (detectSelectionLanguage("안녕하세요 세계 테스트 입니다") !== "ko") { console.error("detect korean"); process.exit(1); }
+if (detectSelectionLanguage("El gato y el perro corren por la calle de la ciudad") !== "es") { console.error("detect spanish"); process.exit(1); }
+if (detectSelectionLanguage("Le chat et le chien courent dans la rue de la ville") !== "fr") { console.error("detect french"); process.exit(1); }
+if (detectSelectionLanguage("xyzqq mnbvc poiuy lkjhg fdsa") !== null) { console.error("detect should reject gibberish"); process.exit(1); }
+if (languageLabelFor("en") !== "lang:en") { console.error("label en"); process.exit(1); }
+if (languageLabelFor("EN") !== "lang:en") { console.error("label EN normalize"); process.exit(1); }
+if (languageLabelFor("xx") !== "") { console.error("label unknown should be empty"); process.exit(1); }
+if (languageLabelFor("") !== "") { console.error("label empty"); process.exit(1); }
+if (languageLabelFor(null) !== "") { console.error("label null"); process.exit(1); }
+const mergedL1 = mergeLanguageLabel(["bug"], "en");
+if (mergedL1.join("|") !== "bug|lang:en") { console.error("merge basic:", mergedL1); process.exit(1); }
+const mergedL2 = mergeLanguageLabel(["bug", "lang:fr"], "en");
+if (mergedL2.join("|") !== "bug|lang:en") { console.error("merge replace existing lang:", mergedL2); process.exit(1); }
+const mergedL3 = mergeLanguageLabel(["bug"], "xx");
+if (mergedL3.join("|") !== "bug") { console.error("merge unknown code should noop:", mergedL3); process.exit(1); }
+const mergedL4 = mergeLanguageLabel(["bug", "lang:en", "lang:fr"], "de");
+if (mergedL4.join("|") !== "bug|lang:de") { console.error("merge dedupes multiple lang:*", mergedL4); process.exit(1); }
+if (DEFAULT_CAPTURE_SETTINGS.languageLabelEnabled !== true) { console.error("DEFAULT_CAPTURE_SETTINGS.languageLabelEnabled default true"); process.exit(1); }
+if (normalizeCaptureSettings({ languageLabelEnabled: false }).languageLabelEnabled !== false) { console.error("languageLabelEnabled false round-trip"); process.exit(1); }
+if (normalizeCaptureSettings({ languageLabelEnabled: "nope" }).languageLabelEnabled !== true) { console.error("languageLabelEnabled non-bool should keep default true"); process.exit(1); }
+const popupHtmlLang = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of ['data-language-row', 'data-action="toggle-language"', 'data-field="language-toggle-label"', 'data-field="language-knob"', "Language label"]) {
+  if (!popupHtmlLang.includes(needle)) { console.error("popup.html missing language token:", needle); process.exit(1); }
+}
+const popupJsLang = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["detectSelectionLanguage", "mergeLanguageLabel", "languageToggleBtn", "toggle-language", "languageLabelEnabled"]) {
+  if (!popupJsLang.includes(needle)) { console.error("popup.js missing language token:", needle); process.exit(1); }
+}
+console.log("\u2713 language-label smoke ok");

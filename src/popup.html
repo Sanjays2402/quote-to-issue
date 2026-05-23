@@ -576,6 +576,25 @@
           </button>
         </div>
         <p class="settings-blurb settings-blurb-sub">When on, strips <code>?token=</code>, <code>?utm_*</code>, and similar params from source URLs so credentials don’t leak into issues.</p>
+        <div class="capture-head capture-head-row" data-language-row>
+          <div class="quote-meta">
+            <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"></circle>
+              <path d="M3 12h18"></path>
+              <path d="M12 3a14 14 0 0 1 0 18"></path>
+              <path d="M12 3a14 14 0 0 0 0 18"></path>
+            </svg>
+            <span class="meta-label">Language label</span>
+          </div>
+          <button class="chip-toggle" type="button" data-action="toggle-language" aria-pressed="true" title="Auto-tag issues with a lang:<code> label based on the selection">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="7" width="18" height="10" rx="5"></rect>
+              <circle cx="15" cy="12" r="3" data-field="language-knob"></circle>
+            </svg>
+            <span data-field="language-toggle-label">On</span>
+          </button>
+        </div>
+        <p class="settings-blurb settings-blurb-sub">Detects the selection’s language and adds a <code>lang:en</code>, <code>lang:ja</code>, … label to new issues.</p>
       </div>
 
       <footer class="form-actions">
