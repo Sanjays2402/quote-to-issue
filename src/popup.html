@@ -230,6 +230,31 @@
         </div>
       </div>
 
+      <div class="field" data-milestone-row>
+        <label class="field-label">Milestone</label>
+        <div class="milestone-row">
+          <button class="btn ghost btn-sm milestone-picker" type="button" data-action="open-milestones" aria-haspopup="listbox" aria-expanded="false" title="Pick a milestone for this repo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 4h12l3 4-3 4H4z"></path>
+              <path d="M4 4v16"></path>
+            </svg>
+            <span data-field="milestone-label">No milestone</span>
+            <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"></path></svg>
+          </button>
+          <button class="icon-btn ghost milestone-refresh" type="button" data-action="refresh-milestones" title="Refresh milestone list" aria-label="Refresh milestones">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
+              <path d="M20 5v6h-6"></path>
+            </svg>
+          </button>
+          <button class="icon-btn ghost milestone-clear" type="button" data-action="clear-milestone" title="Clear milestone" aria-label="Clear milestone" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>
+          </button>
+        </div>
+        <div class="milestone-panel" data-milestone-panel role="listbox" hidden></div>
+        <span class="milestone-status" data-field="milestone-status" data-state="idle">Enter a repo to pick a milestone.</span>
+      </div>
+
       <div class="field">
         <div class="template-head">
           <button class="chip-toggle template-toggle" type="button" data-action="toggle-template" aria-expanded="false" title="Issue template for this repo">

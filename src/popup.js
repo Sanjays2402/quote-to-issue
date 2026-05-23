@@ -16,6 +16,8 @@ const STORAGE_KEYS = Object.freeze({
   recentRepos: "qti.recentRepos",
   repoTemplates: "qti.repoTemplates",
   repoDefaults: "qti.repoDefaults",
+  repoMilestonePref: "qti.repoMilestonePref",
+  repoMilestoneCache: "qti.repoMilestoneCache",
 
   drafts: "qti.drafts",
   repoIssueTypes: "qti.repoIssueTypes",
@@ -676,6 +678,104 @@ async function clearRepoDefaults(repo) {
   if (!all[key]) return;
   delete all[key];
   await chrome.storage.local.set({ [STORAGE_KEYS.repoDefaults]: all });
+}
+
+// ---------------------------------------------------------------------------
+// Per-repo milestone picker
+// ---------------------------------------------------------------------------
+
+const MILESTONE_CACHE_TTL_MS = 5 * 60 * 1000;
+const MILESTONE_CACHE_MAX_REPOS = 12;
+
+function normalizeMilestoneList(items) {
+  if (!Array.isArray(items)) return [];
+  const out = [];
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object") continue;
+    const number = Number(raw.number);
+    const title = String(raw.title || "").trim();
+    if (!Number.isFinite(number) || number <= 0 || !title) continue;
+    out.push({
+      number: Math.floor(number),
+      title: title.slice(0, 200),
+      state: raw.state === "closed" ? "closed" : "open",
+      dueOn: typeof raw.dueOn === "string" ? raw.dueOn : "",
+      htmlUrl: typeof raw.htmlUrl === "string" ? raw.htmlUrl : "",
+      description: String(raw.description || "").slice(0, 400),
+      openIssues: Number(raw.openIssues) || 0,
+      closedIssues: Number(raw.closedIssues) || 0,
+    });
+  }
+  // Cap at 50 for sanity.
+  return out.slice(0, 50);
+}
+
+async function getRepoMilestonePrefAll() {
+  if (!chrome?.storage?.local) return {};
+  const out = await chrome.storage.local.get(STORAGE_KEYS.repoMilestonePref);
+  const raw = out[STORAGE_KEYS.repoMilestonePref];
+  if (!raw || typeof raw !== "object") return {};
+  return raw;
+}
+
+async function getRepoMilestonePref(repo) {
+  const key = repoKey(repo);
+  if (!key) return null;
+  const all = await getRepoMilestonePrefAll();
+  const v = all[key];
+  if (!v || !Number.isFinite(Number(v.number))) return null;
+  return { number: Number(v.number), title: String(v.title || "") };
+}
+
+async function setRepoMilestonePref(repo, milestone) {
+  const key = repoKey(repo);
+  if (!key) return;
+  const all = await getRepoMilestonePrefAll();
+  if (!milestone) {
+    if (all[key]) {
+      delete all[key];
+      await chrome.storage.local.set({ [STORAGE_KEYS.repoMilestonePref]: all });
+    }
+    return;
+  }
+  all[key] = { number: Number(milestone.number) || 0, title: String(milestone.title || "").slice(0, 200), updatedAt: new Date().toISOString() };
+  await chrome.storage.local.set({ [STORAGE_KEYS.repoMilestonePref]: all });
+}
+
+async function getMilestoneCacheAll() {
+  if (!chrome?.storage?.local) return {};
+  const out = await chrome.storage.local.get(STORAGE_KEYS.repoMilestoneCache);
+  const raw = out[STORAGE_KEYS.repoMilestoneCache];
+  if (!raw || typeof raw !== "object") return {};
+  return raw;
+}
+
+async function getCachedMilestones(repo) {
+  const key = repoKey(repo);
+  if (!key) return null;
+  const all = await getMilestoneCacheAll();
+  const entry = all[key];
+  if (!entry || !Array.isArray(entry.items)) return null;
+  const age = Date.now() - (Date.parse(entry.fetchedAt) || 0);
+  if (age > MILESTONE_CACHE_TTL_MS) return { items: normalizeMilestoneList(entry.items), stale: true };
+  return { items: normalizeMilestoneList(entry.items), stale: false };
+}
+
+async function setCachedMilestones(repo, items) {
+  const key = repoKey(repo);
+  if (!key) return;
+  const all = await getMilestoneCacheAll();
+  all[key] = { items: normalizeMilestoneList(items), fetchedAt: new Date().toISOString() };
+  // Trim oldest entries beyond max.
+  const keys = Object.keys(all);
+  if (keys.length > MILESTONE_CACHE_MAX_REPOS) {
+    keys.sort((a, b) => (Date.parse(all[a].fetchedAt) || 0) - (Date.parse(all[b].fetchedAt) || 0));
+    while (keys.length > MILESTONE_CACHE_MAX_REPOS) {
+      const k = keys.shift();
+      delete all[k];
+    }
+  }
+  await chrome.storage.local.set({ [STORAGE_KEYS.repoMilestoneCache]: all });
 }
 
 /**
@@ -1837,6 +1937,20 @@ function buildFormNode(q, state) {
   const tmplDefault = node.querySelector('[data-action="insert-default-template"]');
   const tmplStatus = node.querySelector('[data-field="template-status"]');
 
+  // Milestone picker refs
+  const milestoneRow = node.querySelector("[data-milestone-row]");
+  const milestoneBtn = node.querySelector('[data-action="open-milestones"]');
+  const milestoneLabel = node.querySelector('[data-field="milestone-label"]');
+  const milestonePanel = node.querySelector("[data-milestone-panel]");
+  const milestoneStatus = node.querySelector('[data-field="milestone-status"]');
+  const milestoneRefresh = node.querySelector('[data-action="refresh-milestones"]');
+  const milestoneClear = node.querySelector('[data-action="clear-milestone"]');
+  let activeMilestone = null;       // { number, title }
+  let milestoneItems = [];          // cached list for current repo
+  let milestonePanelOpen = false;
+  let milestoneRepoKey = "";        // repo for which milestoneItems is loaded
+
+
   // Per-repo template state, refreshed whenever the repo field changes.
   let activeTemplate = null;
   let tmplOpen = false;
@@ -2128,6 +2242,12 @@ function buildFormNode(q, state) {
     loadDefaultsForRepo();
     issueTypeAutoApplied = false;
     loadIssueTypeForRepo();
+    // Reset milestone state on repo change; loaded lazily.
+    activeMilestone = null;
+    milestoneItems = [];
+    milestoneRepoKey = "";
+    updateMilestoneLabel?.();
+    if (typeof loadMilestonesForCurrentRepo === "function") loadMilestonesForCurrentRepo().catch(() => {});
   });
   repoInput.addEventListener("focus", () => {
     if (recents.length > 0) openRecents();
@@ -2371,6 +2491,193 @@ function buildFormNode(q, state) {
     refreshDefaultsStatus();
   });
 
+  // --- Milestone picker ---------------------------------------------------
+  function fmtMilestoneDue(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const now = Date.now();
+    const ms = d.getTime() - now;
+    const days = Math.round(ms / 86400000);
+    if (days < -1) return `overdue ${Math.abs(days)}d`;
+    if (days === -1) return "overdue 1d";
+    if (days === 0) return "due today";
+    if (days === 1) return "due tomorrow";
+    if (days < 14) return `in ${days}d`;
+    return iso.slice(0, 10);
+  }
+  function updateMilestoneLabel() {
+    if (!milestoneLabel) return;
+    if (activeMilestone && activeMilestone.number) {
+      milestoneLabel.textContent = activeMilestone.title || `#${activeMilestone.number}`;
+      if (milestoneClear) milestoneClear.hidden = false;
+    } else {
+      milestoneLabel.textContent = "No milestone";
+      if (milestoneClear) milestoneClear.hidden = true;
+    }
+  }
+  function setMilestoneStatus(msg, state) {
+    if (!milestoneStatus) return;
+    milestoneStatus.textContent = msg || "";
+    milestoneStatus.dataset.state = state || "idle";
+  }
+  function closeMilestonePanel() {
+    milestonePanelOpen = false;
+    if (milestonePanel) milestonePanel.hidden = true;
+    if (milestoneBtn) milestoneBtn.setAttribute("aria-expanded", "false");
+  }
+  function openMilestonePanel() {
+    if (!milestonePanel) return;
+    milestonePanelOpen = true;
+    milestonePanel.hidden = false;
+    if (milestoneBtn) milestoneBtn.setAttribute("aria-expanded", "true");
+    renderMilestoneOptions();
+  }
+  function renderMilestoneOptions() {
+    if (!milestonePanel) return;
+    milestonePanel.replaceChildren();
+    if (!milestoneItems.length) {
+      const empty = document.createElement("div");
+      empty.className = "milestone-panel-empty";
+      const repoParsed = parseRepo(repoInput.value);
+      empty.textContent = repoParsed.ok ? "No open milestones in this repo." : "Enter a repo first.";
+      milestonePanel.appendChild(empty);
+      return;
+    }
+    // None option first
+    const none = document.createElement("button");
+    none.type = "button";
+    none.className = "milestone-option";
+    none.setAttribute("role", "option");
+    if (!activeMilestone) none.setAttribute("aria-selected", "true");
+    none.innerHTML = `
+      <span class="milestone-option-dot" style="background:transparent;border:1px solid var(--hairline);"></span>
+      <span class="milestone-option-title">No milestone</span>`;
+    none.addEventListener("click", () => chooseMilestone(null));
+    milestonePanel.appendChild(none);
+    for (const m of milestoneItems) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "milestone-option";
+      row.setAttribute("role", "option");
+      row.dataset.state = m.state;
+      if (activeMilestone && activeMilestone.number === m.number) row.setAttribute("aria-selected", "true");
+      const due = fmtMilestoneDue(m.dueOn);
+      const dueEl = due ? `<span class="milestone-option-due">${due}</span>` : "";
+      const titleText = m.title.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]);
+      row.innerHTML = `
+        <span class="milestone-option-dot"></span>
+        <span class="milestone-option-title" title="${titleText}">${titleText}</span>
+        ${dueEl}`;
+      row.addEventListener("click", () => chooseMilestone({ number: m.number, title: m.title }));
+      milestonePanel.appendChild(row);
+    }
+  }
+  async function chooseMilestone(m) {
+    activeMilestone = m && m.number ? { number: m.number, title: m.title || "" } : null;
+    updateMilestoneLabel();
+    closeMilestonePanel();
+    const repoParsed = parseRepo(repoInput.value);
+    if (repoParsed.ok) {
+      await setRepoMilestonePref(repoParsed.value, activeMilestone).catch(() => {});
+    }
+    saveFormState({ milestone: activeMilestone ? activeMilestone.number : 0, milestoneTitle: activeMilestone ? activeMilestone.title : "" });
+    if (activeMilestone) setMilestoneStatus(`Will assign to “${activeMilestone.title}”.`, "ok");
+    else setMilestoneStatus("No milestone selected.", "idle");
+  }
+  async function fetchMilestonesForRepo(repo, { force = false } = {}) {
+    if (!chrome?.runtime?.sendMessage) return;
+    if (!force) {
+      const cached = await getCachedMilestones(repo).catch(() => null);
+      if (cached && !cached.stale) {
+        milestoneItems = cached.items;
+        milestoneRepoKey = repoKey(repo);
+        renderMilestoneOptions();
+        setMilestoneStatus(`${cached.items.length} open milestone${cached.items.length === 1 ? "" : "s"} (cached).`, "idle");
+        return;
+      }
+    }
+    if (milestoneRefresh) milestoneRefresh.classList.add("loading");
+    setMilestoneStatus("Loading milestones…", "idle");
+    try {
+      const reply = await chrome.runtime.sendMessage({ type: "listMilestones", repo, state: "open" });
+      if (!reply?.ok) throw new Error(reply?.error || "Failed to fetch milestones");
+      const items = normalizeMilestoneList(reply.result?.items || []);
+      milestoneItems = items;
+      milestoneRepoKey = repoKey(repo);
+      await setCachedMilestones(repo, items).catch(() => {});
+      renderMilestoneOptions();
+      setMilestoneStatus(items.length ? `${items.length} open milestone${items.length === 1 ? "" : "s"}.` : "No open milestones.", items.length ? "ok" : "idle");
+    } catch (err) {
+      setMilestoneStatus(String(err?.message || err).slice(0, 160), "err");
+    } finally {
+      if (milestoneRefresh) milestoneRefresh.classList.remove("loading");
+    }
+  }
+  async function loadMilestonesForCurrentRepo({ force = false } = {}) {
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) {
+      milestoneItems = [];
+      milestoneRepoKey = "";
+      activeMilestone = null;
+      updateMilestoneLabel();
+      setMilestoneStatus("Enter a repo to pick a milestone.", "idle");
+      renderMilestoneOptions();
+      return;
+    }
+    const key = repoKey(repoParsed.value);
+    // Restore saved preference if switching repos.
+    if (key !== milestoneRepoKey) {
+      activeMilestone = null;
+      const pref = await getRepoMilestonePref(repoParsed.value).catch(() => null);
+      if (pref && Number.isFinite(pref.number) && pref.number > 0) {
+        activeMilestone = { number: pref.number, title: pref.title || "" };
+      }
+      updateMilestoneLabel();
+    }
+    await fetchMilestonesForRepo(repoParsed.value, { force });
+    // Reconcile activeMilestone with fresh list (title may have changed).
+    if (activeMilestone) {
+      const found = milestoneItems.find((m) => m.number === activeMilestone.number);
+      if (found) {
+        activeMilestone = { number: found.number, title: found.title };
+        updateMilestoneLabel();
+      }
+    }
+  }
+  milestoneBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (milestonePanelOpen) { closeMilestonePanel(); return; }
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) {
+      setMilestoneStatus("Enter a valid repo first.", "err");
+      return;
+    }
+    openMilestonePanel();
+    // If items missing, lazy-load.
+    if (!milestoneItems.length) loadMilestonesForCurrentRepo().catch(() => {});
+  });
+  milestoneRefresh?.addEventListener("click", (e) => {
+    e.preventDefault();
+    loadMilestonesForCurrentRepo({ force: true }).catch(() => {});
+  });
+  milestoneClear?.addEventListener("click", (e) => {
+    e.preventDefault();
+    chooseMilestone(null).catch(() => {});
+  });
+  document.addEventListener("click", (e) => {
+    if (!milestonePanelOpen) return;
+    if (!milestoneRow) return;
+    if (!milestoneRow.contains(e.target)) closeMilestonePanel();
+  });
+  // Restore saved milestone from form state on first render.
+  if (state.milestone && Number.isFinite(Number(state.milestone))) {
+    activeMilestone = { number: Number(state.milestone), title: String(state.milestoneTitle || "") };
+    updateMilestoneLabel();
+  }
+  // Kick off initial load (non-forced, will use cache if fresh).
+  loadMilestonesForCurrentRepo().catch(() => {});
+
   // --- Draft save ----------------------------------------------------------
   function showDraftStatus(msg, kind) {
     if (!draftStatus) return;
@@ -2457,6 +2764,7 @@ function buildFormNode(q, state) {
         body: effectiveBody(),
         labels: parseLabels(labelsInput.value),
         assignees: assigneesInput ? parseAssignees(assigneesInput.value) : [],
+        milestone: activeMilestone?.number || 0,
       });
       if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
       const created = reply.result || {};

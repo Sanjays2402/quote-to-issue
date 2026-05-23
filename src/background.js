@@ -291,13 +291,14 @@ function __qtiNormalizeQueue(list) {
     if (!REPO_RE.test(repo) || !title) continue;
     const labels = Array.isArray(p.labels) ? p.labels.map((s) => String(s).trim()).filter(Boolean).slice(0, 24) : [];
     const assignees = Array.isArray(p.assignees) ? p.assignees.map((s) => String(s).trim().replace(/^@+/, "")).filter(Boolean).slice(0, 10) : [];
+    const milestone = Number.isFinite(Number(p.milestone)) && Number(p.milestone) > 0 ? Math.floor(Number(p.milestone)) : null;
     const id = String(raw.id || "") || `q_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     const body = String(p.body || "");
     const attempts = Math.max(0, Math.min(MAX_QUEUE_ATTEMPTS + 1, Number(raw.attempts) || 0));
     const queuedAt = typeof raw.queuedAt === "string" ? raw.queuedAt : new Date().toISOString();
     const lastError = typeof raw.lastError === "string" ? raw.lastError.slice(0, 400) : "";
     const lastTriedAt = typeof raw.lastTriedAt === "string" ? raw.lastTriedAt : "";
-    out.push({ id, payload: { repo, title, body, labels, assignees }, attempts, queuedAt, lastTriedAt, lastError });
+    out.push({ id, payload: { repo, title, body, labels, assignees, ...(milestone ? { milestone } : {}) }, attempts, queuedAt, lastTriedAt, lastError });
   }
   // Dedupe by id, sort newest queuedAt first, cap.
   const seen = new Set();
@@ -352,7 +353,7 @@ async function __qtiReflectQueueBadge(count) {
 }
 
 async function __qtiPostIssue(payload) {
-  const { repo, title, body, labels, assignees } = payload;
+  const { repo, title, body, labels, assignees, milestone } = payload;
   const token = await getToken();
   if (!token) {
     const err = new Error("No GitHub token saved — open settings to add one.");
@@ -367,7 +368,13 @@ async function __qtiPostIssue(payload) {
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ title, body, labels, ...(assignees && assignees.length ? { assignees } : {}) }),
+    body: JSON.stringify({
+      title,
+      body,
+      labels,
+      ...(assignees && assignees.length ? { assignees } : {}),
+      ...(milestone ? { milestone } : {}),
+    }),
   });
   let data = null;
   try { data = await res.json(); } catch { /* may be empty */ }
@@ -535,8 +542,76 @@ on("searchSimilarIssues", async (msg) => {
   return { items, query: q };
 });
 
+// ---------------------------------------------------------------------------
+// Milestone picker — list open/closed milestones for a repo.
+// Best-effort: works unauthenticated for public repos (low rate limit) and
+// is boosted by the stored PAT.
+// ---------------------------------------------------------------------------
+
+async function __qtiFetchMilestones(repo, state) {
+  const url = `${GITHUB_API}/repos/${repo}/milestones?state=${encodeURIComponent(state)}&per_page=100&sort=due_on&direction=asc`;
+  const headers = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  const token = await getToken().catch(() => null);
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(url, { headers });
+  if (res.status === 403 || res.status === 429) {
+    const reset = Number(res.headers.get("x-ratelimit-reset")) || 0;
+    const err = new Error("GitHub rate limit reached — try again shortly.");
+    err.status = res.status;
+    err.resetAt = reset ? reset * 1000 : null;
+    throw err;
+  }
+  if (res.status === 404) {
+    const err = new Error("Repository not found, or token lacks access.");
+    err.status = 404;
+    throw err;
+  }
+  if (!res.ok) {
+    let data = null;
+    try { data = await res.json(); } catch { /* ignore */ }
+    const detail = data?.message || `${res.status} ${res.statusText}`;
+    const err = new Error(`GitHub: ${detail}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  const items = Array.isArray(data) ? data : [];
+  return items.map((m) => ({
+    number: Number(m?.number) || 0,
+    title: String(m?.title || "").slice(0, 200),
+    description: String(m?.description || "").slice(0, 400),
+    state: m?.state === "closed" ? "closed" : "open",
+    htmlUrl: typeof m?.html_url === "string" ? m.html_url : "",
+    dueOn: typeof m?.due_on === "string" ? m.due_on : "",
+    openIssues: Number(m?.open_issues) || 0,
+    closedIssues: Number(m?.closed_issues) || 0,
+    updatedAt: typeof m?.updated_at === "string" ? m.updated_at : "",
+  })).filter((m) => m.number > 0 && m.title);
+}
+
+on("listMilestones", async (msg) => {
+  const repo = String(msg?.repo || "").trim();
+  const state = msg?.state === "closed" || msg?.state === "all" ? msg.state : "open";
+  if (!REPO_RE.test(repo)) return { items: [], reason: "invalid-repo" };
+  const items = await __qtiFetchMilestones(repo, state);
+  // Sort: ones with dueOn first (soonest), then by updatedAt newest, then title.
+  items.sort((a, b) => {
+    const da = a.dueOn ? Date.parse(a.dueOn) : Infinity;
+    const db = b.dueOn ? Date.parse(b.dueOn) : Infinity;
+    if (da !== db) return da - db;
+    const ua = a.updatedAt ? Date.parse(a.updatedAt) : 0;
+    const ub = b.updatedAt ? Date.parse(b.updatedAt) : 0;
+    if (ua !== ub) return ub - ua;
+    return a.title.localeCompare(b.title);
+  });
+  return { items, repo, state };
+});
+
+// payload: { repo: "owner/name", title, body, labels?: string[], milestone?: number }
 // submitIssue — POST a GitHub issue using the stored PAT.
-// payload: { repo: "owner/name", title, body, labels?: string[] }
 on("submitIssue", async (msg) => {
   const repo = String(msg?.repo || "").trim();
   const title = String(msg?.title || "").trim();
@@ -547,9 +622,11 @@ on("submitIssue", async (msg) => {
   const assignees = Array.isArray(msg?.assignees)
     ? msg.assignees.map((s) => String(s).trim().replace(/^@+/, "")).filter(Boolean).slice(0, 10)
     : [];
+  const milestoneNum = Number(msg?.milestone);
+  const milestone = Number.isFinite(milestoneNum) && milestoneNum > 0 ? Math.floor(milestoneNum) : null;
   if (!REPO_RE.test(repo)) throw new Error("Invalid repo (use owner/name)");
   if (!title) throw new Error("Issue title is required");
-  const payload = { repo, title, body, labels, assignees };
+  const payload = { repo, title, body, labels, assignees, ...(milestone ? { milestone } : {}) };
   const allowQueue = msg?.allowQueue !== false;
   try {
     const result = await __qtiPostIssue(payload);
