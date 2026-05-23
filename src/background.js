@@ -266,6 +266,9 @@ on("submitIssue", async (msg) => {
   const labels = Array.isArray(msg?.labels)
     ? msg.labels.map((s) => String(s).trim()).filter(Boolean).slice(0, 24)
     : [];
+  const assignees = Array.isArray(msg?.assignees)
+    ? msg.assignees.map((s) => String(s).trim().replace(/^@+/, "")).filter(Boolean).slice(0, 10)
+    : [];
   if (!REPO_RE.test(repo)) throw new Error("Invalid repo (use owner/name)");
   if (!title) throw new Error("Issue title is required");
   const token = await getToken();
@@ -278,7 +281,7 @@ on("submitIssue", async (msg) => {
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ title, body, labels }),
+    body: JSON.stringify({ title, body, labels, ...(assignees.length ? { assignees } : {}) }),
   });
   let data = null;
   try { data = await res.json(); } catch { /* may be empty */ }

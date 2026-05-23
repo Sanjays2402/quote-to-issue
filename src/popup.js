@@ -15,6 +15,8 @@ const STORAGE_KEYS = Object.freeze({
   formState: "qti.formState",
   recentRepos: "qti.recentRepos",
   repoTemplates: "qti.repoTemplates",
+  repoDefaults: "qti.repoDefaults",
+
   drafts: "qti.drafts",
   bulkQuotes: "qti.bulkQuotes",
   bulkState: "qti.bulkState",
@@ -176,6 +178,19 @@ function parseLabels(input) {
     .filter(Boolean)
     .filter((v, i, a) => a.indexOf(v) === i)
     .slice(0, 12);
+}
+
+// GitHub username: 1-39 chars, alphanumeric/hyphen, no leading/trailing hyphen,
+// no consecutive hyphens. We're lenient on '@' prefix because humans paste it.
+const GH_USERNAME_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+function parseAssignees(input) {
+  return String(input || "")
+    .split(/[\s,\n]+/)
+    .map((s) => s.trim().replace(/^@+/, ""))
+    .filter(Boolean)
+    .filter((s) => GH_USERNAME_RE.test(s))
+    .filter((v, i, a) => a.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i)
+    .slice(0, 10);
 }
 
 // Common abbreviations that end in '.' but do NOT end a sentence. Used to
@@ -449,6 +464,68 @@ async function clearRepoTemplate(repo) {
   await chrome.storage.local.set({ [STORAGE_KEYS.repoTemplates]: all });
 }
 
+// ---------------------------------------------------------------------------
+// Per-repo default labels + assignees
+// ---------------------------------------------------------------------------
+
+function normalizeRepoDefaults(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const key = repoKey(k);
+    if (!key) continue;
+    if (!v || typeof v !== "object") continue;
+    const labelsIn = Array.isArray(v.labels) ? v.labels.join(",") : v.labels;
+    const assigneesIn = Array.isArray(v.assignees) ? v.assignees.join(",") : v.assignees;
+    const labels = parseLabels(labelsIn);
+    const assignees = parseAssignees(assigneesIn);
+    if (labels.length === 0 && assignees.length === 0) continue;
+    const updatedAt = typeof v.updatedAt === "string" ? v.updatedAt : new Date().toISOString();
+    out[key] = { labels, assignees, updatedAt };
+  }
+  return out;
+}
+
+async function getAllRepoDefaults() {
+  if (!chrome?.storage?.local) return {};
+  const out = await chrome.storage.local.get(STORAGE_KEYS.repoDefaults);
+  return normalizeRepoDefaults(out[STORAGE_KEYS.repoDefaults]);
+}
+
+async function getRepoDefaults(repo) {
+  const key = repoKey(repo);
+  if (!key) return null;
+  const all = await getAllRepoDefaults();
+  return all[key] || null;
+}
+
+async function setRepoDefaults(repo, { labels, assignees }) {
+  const key = repoKey(repo);
+  if (!key) throw new Error("Invalid repo");
+  const labs = parseLabels(Array.isArray(labels) ? labels.join(",") : labels);
+  const asgs = parseAssignees(Array.isArray(assignees) ? assignees.join(",") : assignees);
+  const all = await getAllRepoDefaults();
+  if (labs.length === 0 && asgs.length === 0) {
+    if (all[key]) {
+      delete all[key];
+      await chrome.storage.local.set({ [STORAGE_KEYS.repoDefaults]: all });
+    }
+    return null;
+  }
+  all[key] = { labels: labs, assignees: asgs, updatedAt: new Date().toISOString() };
+  await chrome.storage.local.set({ [STORAGE_KEYS.repoDefaults]: all });
+  return all[key];
+}
+
+async function clearRepoDefaults(repo) {
+  const key = repoKey(repo);
+  if (!key) return;
+  const all = await getAllRepoDefaults();
+  if (!all[key]) return;
+  delete all[key];
+  await chrome.storage.local.set({ [STORAGE_KEYS.repoDefaults]: all });
+}
+
 /**
  * Substitute `{{var}}` placeholders in a template with values derived from the
  * captured quote. Unknown placeholders are left intact so the user notices.
@@ -704,12 +781,13 @@ function normalizeDrafts(list) {
     const title = String(raw.title || "").slice(0, 256);
     const repo = String(raw.repo || "").slice(0, 220);
     const labels = String(raw.labels || "").slice(0, 512);
+    const assignees = String(raw.assignees || "").slice(0, 256);
     const body = String(raw.body || "").slice(0, MAX_DRAFT_BODY_LEN);
     const quote = raw.quote && typeof raw.quote === "object" ? raw.quote : null;
     const createdAt = typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString();
     const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : createdAt;
     if (!title.trim() && !body.trim() && !(quote && quote.selectionText)) continue;
-    out.push({ id, title, repo, labels, body, quote, createdAt, updatedAt });
+    out.push({ id, title, repo, labels, assignees, body, quote, createdAt, updatedAt });
   }
   out.sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
   return out.slice(0, MAX_DRAFTS);
@@ -912,9 +990,10 @@ async function dataUrlToBlob(dataUrl) {
 // expose for tests
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
-    parseRepo, parseLabels, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, buildSourceUrlWithAnchor, deriveScreenshotFilename,
+    parseRepo, parseLabels, parseAssignees, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, buildSourceUrlWithAnchor, deriveScreenshotFilename,
     formatBytes, formatPublishDate, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
+    normalizeRepoDefaults,
     normalizeDrafts, MAX_DRAFTS,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
     normalizeRecentIssues, MAX_RECENT_ISSUES,
@@ -978,12 +1057,13 @@ async function loadDraft(draft) {
     repo: draft.repo || "",
     title: draft.title || "",
     labels: draft.labels || "",
+    assignees: draft.assignees || "",
     draftId: draft.id,
   });
   const frag = document.createDocumentFragment();
   if (draft.quote?.selectionText) frag.appendChild(renderQuoteCard(draft.quote));
   frag.appendChild(buildFormNode(q, {
-    repo: draft.repo, title: draft.title, labels: draft.labels, draftId: draft.id,
+    repo: draft.repo, title: draft.title, labels: draft.labels, assignees: draft.assignees, draftId: draft.id,
   }));
   root.replaceChildren(frag);
 }
@@ -1255,7 +1335,19 @@ function buildFormNode(q, state) {
   repoInput.value = state.repo || "";
   titleInput.value = state.title || deriveTitle(q);
   labelsInput.value = state.labels || "";
-  renderLabelChips(chipRow, parseLabels(labelsInput.value));
+  if (assigneesInput) assigneesInput.value = state.assignees || "";
+  renderLabelChips(chipRow, parseLabels(labelsInput.value), (val) => {
+    const next = parseLabels(labelsInput.value).filter((x) => x !== val);
+    labelsInput.value = next.join(", ");
+    labelsInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  if (assigneesInput && assigneeChipRow) {
+    renderLabelChips(assigneeChipRow, parseAssignees(assigneesInput.value), (val) => {
+      const next = parseAssignees(assigneesInput.value).filter((x) => x.toLowerCase() !== val.toLowerCase());
+      assigneesInput.value = next.join(", ");
+      assigneesInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
   previewBody.textContent = buildMarkdownBody(q);
   if (previewRendered) previewRendered.innerHTML = renderMarkdownPreview(buildMarkdownBody(q));
 
@@ -1410,6 +1502,7 @@ function buildFormNode(q, state) {
 
   validateRepo();
   loadTemplateForRepo();
+  loadDefaultsForRepo();
 
   repoInput.addEventListener("input", () => {
     validateRepo();
@@ -1418,6 +1511,8 @@ function buildFormNode(q, state) {
     if (recentsOpen) renderRecentsList();
     else if (recents.length > 0 && document.activeElement === repoInput) openRecents();
     loadTemplateForRepo();
+    defaultsAutoApplied = false;
+    loadDefaultsForRepo();
   });
   repoInput.addEventListener("focus", () => {
     if (recents.length > 0) openRecents();
@@ -1463,8 +1558,114 @@ function buildFormNode(q, state) {
   });
   titleInput.addEventListener("input", () => saveFormState({ title: titleInput.value }));
   labelsInput.addEventListener("input", () => {
-    renderLabelChips(chipRow, parseLabels(labelsInput.value));
+    renderLabelChips(chipRow, parseLabels(labelsInput.value), (val) => {
+      const next = parseLabels(labelsInput.value).filter((x) => x !== val);
+      labelsInput.value = next.join(", ");
+      labelsInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
     saveFormState({ labels: labelsInput.value });
+    refreshDefaultsStatus();
+  });
+  assigneesInput?.addEventListener("input", () => {
+    renderLabelChips(assigneeChipRow, parseAssignees(assigneesInput.value), (val) => {
+      const next = parseAssignees(assigneesInput.value).filter((x) => x.toLowerCase() !== val.toLowerCase());
+      assigneesInput.value = next.join(", ");
+      assigneesInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    saveFormState({ assignees: assigneesInput.value });
+    refreshDefaultsStatus();
+  });
+
+  // --- Per-repo defaults (labels + assignees) -----------------------------
+  function applyDefaults(d) {
+    if (!d) return;
+    if (Array.isArray(d.labels) && d.labels.length) {
+      labelsInput.value = d.labels.join(", ");
+      labelsInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    if (assigneesInput && Array.isArray(d.assignees) && d.assignees.length) {
+      assigneesInput.value = d.assignees.join(", ");
+      assigneesInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+  function refreshDefaultsStatus() {
+    if (!defaultsStatus) return;
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) {
+      defaultsStatus.dataset.state = "empty";
+      defaultsStatus.textContent = "Enter a repo to save defaults.";
+      if (defaultsApplyBtn) defaultsApplyBtn.disabled = true;
+      if (defaultsClearBtn) defaultsClearBtn.disabled = true;
+      if (defaultsSaveBtn) defaultsSaveBtn.disabled = true;
+      return;
+    }
+    const labs = parseLabels(labelsInput.value);
+    const asgs = assigneesInput ? parseAssignees(assigneesInput.value) : [];
+    const hasAny = labs.length + asgs.length > 0;
+    if (activeDefaults) {
+      defaultsStatus.dataset.state = "saved";
+      const labStr = activeDefaults.labels.length ? `labels: ${activeDefaults.labels.join(", ")}` : "";
+      const asgStr = activeDefaults.assignees.length ? `assignees: ${activeDefaults.assignees.map((a) => "@" + a).join(", ")}` : "";
+      defaultsStatus.textContent = `Defaults for ${repoParsed.value} \u00b7 ${[labStr, asgStr].filter(Boolean).join(" \u00b7 ")}`;
+      if (defaultsApplyBtn) defaultsApplyBtn.disabled = false;
+      if (defaultsClearBtn) defaultsClearBtn.disabled = false;
+    } else {
+      defaultsStatus.dataset.state = "empty";
+      defaultsStatus.textContent = `No defaults saved for ${repoParsed.value}.`;
+      if (defaultsApplyBtn) defaultsApplyBtn.disabled = true;
+      if (defaultsClearBtn) defaultsClearBtn.disabled = true;
+    }
+    if (defaultsSaveBtn) defaultsSaveBtn.disabled = !hasAny;
+  }
+  async function loadDefaultsForRepo() {
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) {
+      activeDefaults = null;
+      defaultsAutoApplied = false;
+      refreshDefaultsStatus();
+      return;
+    }
+    activeDefaults = await getRepoDefaults(repoParsed.value).catch(() => null);
+    // Auto-apply once per repo when label/assignee fields are empty.
+    const labsEmpty = parseLabels(labelsInput.value).length === 0;
+    const asgsEmpty = assigneesInput ? parseAssignees(assigneesInput.value).length === 0 : true;
+    if (activeDefaults && !defaultsAutoApplied && labsEmpty && asgsEmpty) {
+      defaultsAutoApplied = true;
+      applyDefaults(activeDefaults);
+    }
+    refreshDefaultsStatus();
+  }
+  defaultsApplyBtn?.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (activeDefaults) applyDefaults(activeDefaults);
+  });
+  defaultsSaveBtn?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) return;
+    defaultsSaveBtn.disabled = true;
+    try {
+      activeDefaults = await setRepoDefaults(repoParsed.value, {
+        labels: parseLabels(labelsInput.value),
+        assignees: assigneesInput ? parseAssignees(assigneesInput.value) : [],
+      });
+      defaultsAutoApplied = true;
+      refreshDefaultsStatus();
+    } catch (err) {
+      if (defaultsStatus) {
+        defaultsStatus.dataset.state = "err";
+        defaultsStatus.textContent = `Save failed: ${err?.message || err}`;
+      }
+      defaultsSaveBtn.disabled = false;
+    }
+  });
+  defaultsClearBtn?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    const repoParsed = parseRepo(repoInput.value);
+    if (!repoParsed.ok) return;
+    await clearRepoDefaults(repoParsed.value).catch(() => {});
+    activeDefaults = null;
+    refreshDefaultsStatus();
   });
 
   // --- Draft save ----------------------------------------------------------
@@ -1498,6 +1699,7 @@ function buildFormNode(q, state) {
         title: titleInput.value.trim(),
         repo: repoInput.value.trim(),
         labels: labelsInput.value,
+        assignees: assigneesInput ? assigneesInput.value : "",
         body: effectiveBody(),
         quote: q || null,
       });
@@ -1551,6 +1753,7 @@ function buildFormNode(q, state) {
         title,
         body: effectiveBody(),
         labels: parseLabels(labelsInput.value),
+        assignees: assigneesInput ? parseAssignees(assigneesInput.value) : [],
       });
       if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
       const created = reply.result || {};

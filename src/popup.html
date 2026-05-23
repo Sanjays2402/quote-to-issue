@@ -132,6 +132,35 @@
       </div>
 
       <div class="field">
+        <label class="field-label" for="qti-assignees">Assignees</label>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="8" r="4"></circle>
+            <path d="M4 21a8 8 0 0 1 16 0"></path>
+          </svg>
+          <input id="qti-assignees" name="assignees" class="input" type="text" placeholder="octocat, mojombo" autocomplete="off" spellcheck="false" data-field="assignees">
+        </div>
+        <div class="chip-row" data-field="assignee-chips"></div>
+        <div class="defaults-row" data-defaults-row>
+          <span class="defaults-status" data-field="defaults-status" data-state="empty">Enter a repo to save defaults.</span>
+          <div class="defaults-actions">
+            <button class="btn ghost btn-sm" type="button" data-action="apply-defaults" disabled title="Apply this repo's saved defaults">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l4 4 10-10"></path></svg>
+              <span>Apply</span>
+            </button>
+            <button class="btn ghost btn-sm" type="button" data-action="clear-defaults" disabled title="Remove saved defaults for this repo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>
+              <span>Clear</span>
+            </button>
+            <button class="btn ghost btn-sm" type="button" data-action="save-defaults" disabled title="Save current labels + assignees as defaults for this repo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"></path><path d="M8 4v5h8"></path></svg>
+              <span>Save as default</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
         <div class="template-head">
           <button class="chip-toggle template-toggle" type="button" data-action="toggle-template" aria-expanded="false" title="Issue template for this repo">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

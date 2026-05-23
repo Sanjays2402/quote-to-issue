@@ -24,6 +24,6 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Author/byline + publish date scraping for news/blog pages
 - [x] Code block detection: wrap selections from <pre>/<code> as fenced markdown
 - [x] Recent-issues panel: list last 10 issues filed, click to reopen on GitHub
-- [ ] Per-repo default labels + assignees with chip editor
+- [x] Per-repo default labels + assignees with chip editor
 - [ ] Settings page with liquid-glass design and token rotation
 - [ ] Offline queue: retry failed POSTs when connectivity returns

@@ -511,3 +511,50 @@ for (const needle of ["normalizeRecentIssues", "addRecentIssue", "getRecentIssue
 }
 console.log("\u2713 recent-issues integration smoke ok");
 
+
+// --- Per-repo default labels + assignees ---------------------------------
+const { parseAssignees, normalizeRepoDefaults } = globalThis.__qti;
+if (typeof parseAssignees !== "function") { console.error("parseAssignees missing"); process.exit(1); }
+if (typeof normalizeRepoDefaults !== "function") { console.error("normalizeRepoDefaults missing"); process.exit(1); }
+const asg = parseAssignees("@octocat, @MOJOMBO,  defunkt\noctocat, , -bad-, ok-user");
+// dedupe (case-insensitive), drops invalid, strips @, keeps order
+if (asg.join("|") !== "octocat|MOJOMBO|defunkt|ok-user") { console.error("parseAssignees wrong:", asg); process.exit(1); }
+if (parseAssignees("").length !== 0) { console.error("parseAssignees empty"); process.exit(1); }
+const rawD = {
+  "vercel/next.js": { labels: ["bug", "p1"], assignees: ["octocat"], updatedAt: "2026-05-20T10:00:00Z" },
+  "VERCEL/Next.JS": { labels: "docs", assignees: "" }, // dedupe via lowercase key, newer not provided — original wins
+  "bad-input": { labels: ["x"] },
+  "empty/repo": { labels: [], assignees: [] }, // dropped
+  "string-input/repo": { labels: "bug, docs, bug", assignees: "@a, b" },
+};
+const normD = normalizeRepoDefaults(rawD);
+const kD = Object.keys(normD).sort();
+if (kD.length !== 2 || !kD.includes("vercel/next.js") || !kD.includes("string-input/repo")) { console.error("normalizeRepoDefaults keys wrong:", kD); process.exit(1); }
+const v = normD["vercel/next.js"];
+if (!Array.isArray(v.labels) || v.labels.join("|") !== "docs") { console.error("normalizeRepoDefaults labels wrong:", v); process.exit(1); }
+if (!Array.isArray(v.assignees) || v.assignees.length !== 0) { console.error("normalizeRepoDefaults assignees wrong:", v); process.exit(1); }
+const v2 = normD["string-input/repo"];
+if (v2.labels.join("|") !== "bug|docs" || v2.assignees.join("|") !== "a|b") { console.error("normalizeRepoDefaults string-input wrong:", v2); process.exit(1); }
+if (Object.keys(normalizeRepoDefaults(null)).length !== 0) { console.error("normalizeRepoDefaults null"); process.exit(1); }
+
+// popup.html: assignees field + chip row + defaults controls
+const popupHtmlD = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of ['data-field="assignees"', 'data-field="assignee-chips"', 'data-defaults-row', 'data-field="defaults-status"', 'data-action="save-defaults"', 'data-action="clear-defaults"', 'data-action="apply-defaults"']) {
+  if (!popupHtmlD.includes(needle)) { console.error("popup.html missing defaults token:", needle); process.exit(1); }
+}
+// popup.css: chip-remove + defaults-row styling
+const popupCssD = fs.readFileSync("src/popup.css", "utf8");
+for (const needle of [".chip-remove", ".defaults-row", ".defaults-actions", ".defaults-status"]) {
+  if (!popupCssD.includes(needle)) { console.error("popup.css missing defaults token:", needle); process.exit(1); }
+}
+// popup.js: storage key + helpers + wiring
+const popupJsD = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["qti.repoDefaults", "normalizeRepoDefaults", "getRepoDefaults", "setRepoDefaults", "clearRepoDefaults", "parseAssignees", "loadDefaultsForRepo", "applyDefaults"]) {
+  if (!popupJsD.includes(needle)) { console.error("popup.js missing defaults token:", needle); process.exit(1); }
+}
+// background.js: assignees forwarded on POST
+const swD = fs.readFileSync("src/background.js", "utf8");
+for (const needle of ["assignees", "msg?.assignees"]) {
+  if (!swD.includes(needle)) { console.error("background.js missing assignees token:", needle); process.exit(1); }
+}
+console.log("\u2713 repo-defaults smoke ok");
