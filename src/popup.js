@@ -83,7 +83,7 @@ function rankDuplicates(items, tokens) {
 // ---------------------------------------------------------------------------
 const CONTEXT_RADIUS_MIN = 0;
 const CONTEXT_RADIUS_MAX = 600;
-const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false });
+const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false, privacyMode: false });
 
 function normalizeCaptureSettings(raw) {
   const out = { ...DEFAULT_CAPTURE_SETTINGS };
@@ -95,7 +95,63 @@ function normalizeCaptureSettings(raw) {
   }
   if (!out.contextEnabled) out.contextRadius = 0;
   if (typeof raw.highlightMode === "boolean") out.highlightMode = raw.highlightMode;
+  if (typeof raw.privacyMode === "boolean") out.privacyMode = raw.privacyMode;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Privacy mode: scrub query params + auth tokens from captured URLs.
+// Goal — keep source attribution useful (origin + path + scroll-to-text
+// fragment) while stripping anything that could leak credentials, session
+// state, or analytics identifiers into a public issue tracker.
+// ---------------------------------------------------------------------------
+const PRIVACY_AUTH_PARAM_RE = /^(?:token|access[_-]?token|id[_-]?token|refresh[_-]?token|auth(?:[_-]?token)?|bearer|api[_-]?key|apikey|key|secret|password|passwd|pwd|session(?:id)?|sid|sig|signature|code|state|nonce|hmac|jwt|otp|csrf|x[_-]?auth.*)$/i;
+const PRIVACY_TRACKING_PARAM_RE = /^(?:utm_.*|fbclid|gclid|dclid|msclkid|yclid|mc_eid|mc_cid|ref|ref_(?:src|url)|_hsenc|_hsmi|igshid|trk|trkCampaign|vero_id|piwik_.*|wt_z?mc|hsCtaTracking|share|s)$/i;
+
+function scrubUrlForPrivacy(rawUrl) {
+  const s = String(rawUrl || "").trim();
+  if (!s) return "";
+  let u;
+  try { u = new URL(s); } catch { return ""; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+  // Drop userinfo (user:pass@host) — always a credential leak.
+  u.username = "";
+  u.password = "";
+  // Strip the entire query string. The scrubbed URL keeps origin + path so
+  // attribution still resolves; scroll-to-text fragments live in the hash and
+  // are appended later by the markdown builder.
+  u.search = "";
+  // Drop the existing fragment too — author-provided fragments occasionally
+  // carry session/auth blobs (e.g. SPA implicit-flow callbacks).
+  u.hash = "";
+  return u.toString();
+}
+
+function scrubAuthParamsOnly(rawUrl) {
+  const s = String(rawUrl || "").trim();
+  if (!s) return s;
+  let u;
+  try { u = new URL(s); } catch { return s; }
+  if (!u.search) return s;
+  let mutated = false;
+  const drop = [];
+  for (const k of u.searchParams.keys()) {
+    if (PRIVACY_AUTH_PARAM_RE.test(k) || PRIVACY_TRACKING_PARAM_RE.test(k)) {
+      drop.push(k); mutated = true;
+    }
+  }
+  for (const k of drop) u.searchParams.delete(k);
+  return mutated ? u.toString() : s;
+}
+
+function applyPrivacyToQuote(q, settings) {
+  if (!q) return q;
+  const on = !!settings?.privacyMode;
+  if (!on) return q;
+  const next = { ...q };
+  if (next.pageUrl) next.pageUrl = scrubUrlForPrivacy(next.pageUrl);
+  if (next.frameUrl) next.frameUrl = scrubUrlForPrivacy(next.frameUrl);
+  return next;
 }
 
 async function getCaptureSettings() {
@@ -1480,6 +1536,8 @@ if (typeof globalThis !== "undefined") {
     renderMarkdownPreview, escapeHtml,
     normalizeCaptureSettings, DEFAULT_CAPTURE_SETTINGS,
     CONTEXT_RADIUS_MIN, CONTEXT_RADIUS_MAX,
+    scrubUrlForPrivacy, scrubAuthParamsOnly, applyPrivacyToQuote,
+    PRIVACY_AUTH_PARAM_RE, PRIVACY_TRACKING_PARAM_RE,
   };
 }
 
@@ -3016,6 +3074,8 @@ async function renderSettings() {
   const contextRangeValue = node.querySelector('[data-field="context-radius-value"]');
   const highlightToggleBtn = node.querySelector('[data-action="toggle-highlight"]');
   const highlightToggleLabel = node.querySelector('[data-field="highlight-toggle-label"]');
+  const privacyToggleBtn = node.querySelector('[data-action="toggle-privacy"]');
+  const privacyToggleLabel = node.querySelector('[data-field="privacy-toggle-label"]');
 
   async function refreshStatus() {
     const info = await getTokenInfo().catch(() => null);
@@ -3141,6 +3201,22 @@ async function renderSettings() {
     highlightToggleBtn.addEventListener("click", async () => {
       const next = await setCaptureSettings({ highlightMode: highlightToggleBtn.getAttribute("aria-pressed") !== "true" });
       applyHl(next.highlightMode);
+    });
+  }
+
+  // Privacy-mode wiring — strips query params + auth tokens from captured
+  // URLs (and any frame URL) before they reach storage, the popup form, or
+  // the GitHub API submit path. Stored alongside other capture settings.
+  if (privacyToggleBtn) {
+    const cur = await getCaptureSettings();
+    const applyPr = (on) => {
+      privacyToggleBtn.setAttribute("aria-pressed", String(!!on));
+      if (privacyToggleLabel) privacyToggleLabel.textContent = on ? "On" : "Off";
+    };
+    applyPr(!!cur.privacyMode);
+    privacyToggleBtn.addEventListener("click", async () => {
+      const next = await setCaptureSettings({ privacyMode: privacyToggleBtn.getAttribute("aria-pressed") !== "true" });
+      applyPr(next.privacyMode);
     });
   }
 

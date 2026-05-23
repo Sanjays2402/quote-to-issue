@@ -36,4 +36,4 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Issue success toast with copy-link and open-in-tab actions
 - [x] Quote history search: full-text search over previously filed quotes
 - [x] Per-repo milestone picker populated from GitHub API
-- [ ] Privacy mode: scrub query params and auth tokens from captured URLs
+- [x] Privacy mode: scrub query params and auth tokens from captured URLs

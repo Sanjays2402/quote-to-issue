@@ -35,6 +35,40 @@ const CONTEXT_MENU_BULK_ID = "qti.addToBatch";
 const CONTEXT_MENU_BULK_TITLE = "Add to issue batch";
 const MAX_BULK_QUOTES = 20;
 
+// ---------------------------------------------------------------------------
+// Privacy mode — scrub query params and auth tokens from captured URLs.
+// Mirrors popup.js scrubUrlForPrivacy so the SW shortcut and context-menu
+// paths produce the same redacted URL before anything is stored.
+// ---------------------------------------------------------------------------
+function __qtiScrubUrlForPrivacy(rawUrl) {
+  const s = String(rawUrl || "").trim();
+  if (!s) return "";
+  let u;
+  try { u = new URL(s); } catch { return ""; }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+  u.username = "";
+  u.password = "";
+  u.search = "";
+  u.hash = "";
+  return u.toString();
+}
+
+async function __qtiPrivacyModeEnabled() {
+  try {
+    const out = await chrome.storage.local.get(STORAGE_KEYS.captureSettings);
+    const s = out[STORAGE_KEYS.captureSettings];
+    return !!(s && typeof s === "object" && s.privacyMode === true);
+  } catch { return false; }
+}
+
+function __qtiApplyPrivacyToQuote(q, enabled) {
+  if (!enabled || !q) return q;
+  const next = { ...q };
+  if (next.pageUrl) next.pageUrl = __qtiScrubUrlForPrivacy(next.pageUrl);
+  if (next.frameUrl) next.frameUrl = __qtiScrubUrlForPrivacy(next.frameUrl);
+  return next;
+}
+
 function __qtiQuoteFingerprint(q) {
   const sel = (q?.selectionText || "").replace(/\s+/g, " ").trim().slice(0, 200);
   const url = String(q?.pageUrl || "").trim();
@@ -1100,7 +1134,8 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
   ]);
   const screenshot = await __qtiMaybeSpotlight(rawShot, enriched);
   const selectionText = (enriched?.selectionText || info.selectionText || "").trim();
-  const quote = {
+  const privacyOn = await __qtiPrivacyModeEnabled();
+  const quote = __qtiApplyPrivacyToQuote({
     selectionText,
     selectionHtml: enriched?.selectionHtml ?? "",
     contextBefore: enriched?.contextBefore ?? "",
@@ -1115,7 +1150,7 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
     frameUrl: info.frameUrl ?? "",
     screenshot: screenshot || null,
     capturedAt: new Date().toISOString(),
-  };
+  }, privacyOn);
   try {
     if (info.menuItemId === CONTEXT_MENU_BULK_ID) {
       // Append to the batch queue. Dedupe by URL + selection fingerprint so
@@ -1191,8 +1226,9 @@ async function __qtiBuildQuoteFromActiveTab() {
   const screenshot = await __qtiMaybeSpotlight(rawShot, enriched);
   const selectionText = String(enriched?.selectionText || "").trim();
   if (!selectionText) return { error: "no selection — highlight text first" };
+  const privacyOn = await __qtiPrivacyModeEnabled();
   return {
-    quote: {
+    quote: __qtiApplyPrivacyToQuote({
       selectionText,
       selectionHtml: enriched?.selectionHtml ?? "",
       contextBefore: enriched?.contextBefore ?? "",
@@ -1207,7 +1243,7 @@ async function __qtiBuildQuoteFromActiveTab() {
       frameUrl: "",
       screenshot: screenshot || null,
       capturedAt: new Date().toISOString(),
-    },
+    }, privacyOn),
   };
 }
 

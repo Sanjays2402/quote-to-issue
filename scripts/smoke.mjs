@@ -402,6 +402,74 @@ if (normalizeCaptureSettings({ highlightMode: "yes" }).highlightMode !== false) 
 if (normalizeCaptureSettings(undefined).highlightMode !== false) { console.error("highlightMode default false"); process.exit(1); }
 console.log("\u2713 capture settings smoke ok");
 
+// --- Privacy mode (scrub query params + auth tokens) ---------------------
+const { scrubUrlForPrivacy, scrubAuthParamsOnly, applyPrivacyToQuote, PRIVACY_AUTH_PARAM_RE, PRIVACY_TRACKING_PARAM_RE } = globalThis.__qti;
+if (typeof scrubUrlForPrivacy !== "function") { console.error("scrubUrlForPrivacy missing"); process.exit(1); }
+if (typeof scrubAuthParamsOnly !== "function") { console.error("scrubAuthParamsOnly missing"); process.exit(1); }
+if (typeof applyPrivacyToQuote !== "function") { console.error("applyPrivacyToQuote missing"); process.exit(1); }
+if (!(PRIVACY_AUTH_PARAM_RE instanceof RegExp)) { console.error("PRIVACY_AUTH_PARAM_RE not regex"); process.exit(1); }
+if (!(PRIVACY_TRACKING_PARAM_RE instanceof RegExp)) { console.error("PRIVACY_TRACKING_PARAM_RE not regex"); process.exit(1); }
+if (scrubUrlForPrivacy("") !== "") { console.error("scrubUrlForPrivacy empty"); process.exit(1); }
+if (scrubUrlForPrivacy("not a url") !== "") { console.error("scrubUrlForPrivacy invalid"); process.exit(1); }
+if (scrubUrlForPrivacy("javascript:alert(1)") !== "") { console.error("scrubUrlForPrivacy should reject non-http"); process.exit(1); }
+if (scrubUrlForPrivacy("file:///etc/passwd") !== "") { console.error("scrubUrlForPrivacy should reject file://"); process.exit(1); }
+const sc1 = scrubUrlForPrivacy("https://example.com/path?token=abc123&utm_source=newsletter&q=ok#frag");
+if (sc1 !== "https://example.com/path") { console.error("scrubUrlForPrivacy basic:", sc1); process.exit(1); }
+const sc2 = scrubUrlForPrivacy("https://user:pass@example.com/x?y=1");
+if (sc2 !== "https://example.com/x") { console.error("scrubUrlForPrivacy userinfo:", sc2); process.exit(1); }
+const sc3 = scrubUrlForPrivacy("https://example.com/article");
+if (sc3 !== "https://example.com/article") { console.error("scrubUrlForPrivacy passthrough:", sc3); process.exit(1); }
+const sc4 = scrubUrlForPrivacy("http://Example.COM:8080/Path?Token=x");
+if (!sc4.startsWith("http://example.com:8080/Path") || sc4.includes("Token")) { console.error("scrubUrlForPrivacy port/case:", sc4); process.exit(1); }
+
+// scrubAuthParamsOnly retains the path + non-sensitive params.
+const sa1 = scrubAuthParamsOnly("https://example.com/path?token=abc&page=2&utm_source=x");
+if (sa1 !== "https://example.com/path?page=2") { console.error("scrubAuthParamsOnly mixed:", sa1); process.exit(1); }
+const sa2 = scrubAuthParamsOnly("https://example.com/path?page=2&size=10");
+if (sa2 !== "https://example.com/path?page=2&size=10") { console.error("scrubAuthParamsOnly safe params passthrough:", sa2); process.exit(1); }
+if (scrubAuthParamsOnly("") !== "") { console.error("scrubAuthParamsOnly empty"); process.exit(1); }
+if (scrubAuthParamsOnly("not a url") !== "not a url") { console.error("scrubAuthParamsOnly invalid passthrough"); process.exit(1); }
+for (const k of ["token", "access_token", "id_token", "refresh_token", "auth_token", "bearer", "api_key", "apikey", "secret", "password", "sessionid", "sid", "sig", "signature", "code", "state", "nonce", "jwt", "otp", "csrf", "x_auth_session"]) {
+  if (!PRIVACY_AUTH_PARAM_RE.test(k)) { console.error("PRIVACY_AUTH_PARAM_RE should match:", k); process.exit(1); }
+}
+for (const k of ["page", "size", "id", "q", "query"]) {
+  if (PRIVACY_AUTH_PARAM_RE.test(k)) { console.error("PRIVACY_AUTH_PARAM_RE false-positive:", k); process.exit(1); }
+}
+for (const k of ["utm_source", "utm_medium", "fbclid", "gclid", "mc_eid", "igshid"]) {
+  if (!PRIVACY_TRACKING_PARAM_RE.test(k)) { console.error("PRIVACY_TRACKING_PARAM_RE should match:", k); process.exit(1); }
+}
+
+// applyPrivacyToQuote
+if (applyPrivacyToQuote(null, { privacyMode: true }) !== null) { console.error("applyPrivacyToQuote null"); process.exit(1); }
+const qIn = { selectionText: "hi", pageUrl: "https://e.com/p?token=secret&utm_source=x", frameUrl: "https://f.com/p?code=abc" };
+const qOff = applyPrivacyToQuote(qIn, { privacyMode: false });
+if (qOff.pageUrl !== qIn.pageUrl) { console.error("applyPrivacyToQuote off should not mutate"); process.exit(1); }
+const qOn = applyPrivacyToQuote(qIn, { privacyMode: true });
+if (qOn.pageUrl !== "https://e.com/p") { console.error("applyPrivacyToQuote on pageUrl:", qOn.pageUrl); process.exit(1); }
+if (qOn.frameUrl !== "https://f.com/p") { console.error("applyPrivacyToQuote on frameUrl:", qOn.frameUrl); process.exit(1); }
+if (qIn.pageUrl !== "https://e.com/p?token=secret&utm_source=x") { console.error("applyPrivacyToQuote should be non-mutating"); process.exit(1); }
+
+// Normalization round-trips privacyMode.
+if (normalizeCaptureSettings(undefined).privacyMode !== false) { console.error("privacyMode default false"); process.exit(1); }
+if (normalizeCaptureSettings({ privacyMode: true }).privacyMode !== true) { console.error("privacyMode true round-trip"); process.exit(1); }
+if (normalizeCaptureSettings({ privacyMode: "yes" }).privacyMode !== false) { console.error("privacyMode non-bool defaults false"); process.exit(1); }
+if (DEFAULT_CAPTURE_SETTINGS.privacyMode !== false) { console.error("DEFAULT_CAPTURE_SETTINGS.privacyMode default false"); process.exit(1); }
+
+// UI scaffolding tokens.
+const popupHtmlPrivacy = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of ['data-privacy-row', 'data-action="toggle-privacy"', 'data-field="privacy-toggle-label"', 'data-field="privacy-knob"', "Privacy mode"]) {
+  if (!popupHtmlPrivacy.includes(needle)) { console.error("popup.html missing privacy token:", needle); process.exit(1); }
+}
+const popupJsPrivacy = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["scrubUrlForPrivacy", "applyPrivacyToQuote", "privacyToggleBtn", "toggle-privacy", "privacyMode"]) {
+  if (!popupJsPrivacy.includes(needle)) { console.error("popup.js missing privacy token:", needle); process.exit(1); }
+}
+const swPrivacy = fs.readFileSync("src/background.js", "utf8");
+for (const needle of ["__qtiScrubUrlForPrivacy", "__qtiApplyPrivacyToQuote", "__qtiPrivacyModeEnabled", "privacyMode"]) {
+  if (!swPrivacy.includes(needle)) { console.error("background.js missing privacy token:", needle); process.exit(1); }
+}
+console.log("\u2713 privacy-mode smoke ok");
+
 // --- Highlighted-selection screenshot mode -------------------------------
 const swHl = fs.readFileSync("src/background.js", "utf8");
 for (const needle of [
