@@ -397,3 +397,30 @@ const capStr = normalizeCaptureSettings({ contextEnabled: true, contextRadius: "
 if (capStr.contextRadius !== 180) { console.error("radius string coerce wrong"); process.exit(1); }
 console.log("\u2713 capture settings smoke ok");
 
+// --- Byline + publish date scraping --------------------------------------
+const { formatPublishDate } = globalThis.__qti;
+if (typeof formatPublishDate !== "function") { console.error("formatPublishDate missing"); process.exit(1); }
+if (formatPublishDate("") !== "") { console.error("formatPublishDate empty"); process.exit(1); }
+if (formatPublishDate("2026-05-23T10:00:00Z") !== "2026-05-23") { console.error("formatPublishDate ISO"); process.exit(1); }
+if (formatPublishDate("2026-05-23T12:00:00Z") !== "2026-05-23") { console.error("formatPublishDate ISO mid:", formatPublishDate("2026-05-23T12:00:00Z")); process.exit(1); }
+if (formatPublishDate("not-a-date") !== "not-a-date") { console.error("formatPublishDate fallback"); process.exit(1); }
+const bodyByline = buildMarkdownBody({
+  selectionText: "hi", pageTitle: "D", pageUrl: "https://e.com",
+  capturedAt: "2026-05-23T10:00:00Z",
+  author: "Jane Doe", publishedAt: "2026-05-22T00:00:00Z",
+});
+if (!bodyByline.includes("**Author:** Jane Doe")) { console.error("body missing author"); process.exit(1); }
+if (!bodyByline.includes("**Published:** 2026-05-22")) { console.error("body missing published"); process.exit(1); }
+const renderedByline = renderTemplate("by {{author}} on {{published_at}}", { selectionText: "x", author: "Jane Doe", publishedAt: "2026-05-22T00:00:00Z" });
+if (renderedByline !== "by Jane Doe on 2026-05-22") { console.error("renderTemplate byline:", renderedByline); process.exit(1); }
+// Background scraper must declare same placeholders + DOM scrape hook.
+const swSrc = fs.readFileSync("src/background.js", "utf8");
+for (const needle of ["scrapeByline", "datePublished", "article:published_time", "itemprop=\"author\"", "author:", "publishedAt:", "__qtiFormatPublishDate", "published_at:"]) {
+  if (!swSrc.includes(needle)) { console.error("background.js missing byline token:", needle); process.exit(1); }
+}
+const popupHtml2 = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of ["data-byline-row", "data-published-row", 'data-field="author"', 'data-field="publishedAt"']) {
+  if (!popupHtml2.includes(needle)) { console.error("popup.html missing byline token:", needle); process.exit(1); }
+}
+console.log("\u2713 byline smoke ok");
+

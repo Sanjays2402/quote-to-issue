@@ -124,12 +124,28 @@ function __qtiBuildMarkdownBody(q) {
     }
   }
   if (q.nearestHeading) lines.push(`**Section:** ${q.nearestHeading}`);
+  if (q.author) lines.push(`**Author:** ${q.author}`);
+  if (q.publishedAt) lines.push(`**Published:** ${__qtiFormatPublishDate(q.publishedAt)}`);
   if (q.screenshot && q.screenshot.dataUrl) {
     const dim = (q.screenshot.width && q.screenshot.height) ? `${q.screenshot.width}\u00d7${q.screenshot.height}` : "PNG";
     lines.push(`**Screenshot:** captured (${dim}) \u2014 paste from clipboard or attach the downloaded PNG when filing.`);
   }
   if (q.capturedAt) lines.push(`**Captured:** ${q.capturedAt}`);
   return lines.join("\n").trim();
+}
+
+function __qtiFormatPublishDate(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const t = Date.parse(s);
+  if (Number.isFinite(t)) {
+    const d = new Date(t);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  return s.slice(0, 64);
 }
 
 function __qtiRenderTemplate(tpl, q) {
@@ -146,6 +162,8 @@ function __qtiRenderTemplate(tpl, q) {
     captured_at: String(q?.capturedAt || ""),
     context_before: String(q?.contextBefore || ""),
     context_after: String(q?.contextAfter || ""),
+    author: String(q?.author || ""),
+    published_at: __qtiFormatPublishDate(q?.publishedAt),
   };
   return String(tpl).replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k) => Object.prototype.hasOwnProperty.call(repls, k) ? repls[k] : m);
 }
@@ -318,10 +336,90 @@ function ensureContextMenu() {
  */
 function __qtiCaptureSelection(opts) {
   const radius = Math.max(0, Math.min(600, Number(opts?.contextRadius ?? 240) || 0));
+  // Scrape byline + publish date from the host page. Best-effort, never
+  // throws — fields are empty strings when nothing matches. Order of
+  // precedence: JSON-LD → OpenGraph/meta → visible DOM hints.
+  function scrapeByline() {
+    let author = "";
+    let publishedAt = "";
+    const pickMeta = (names) => {
+      for (const n of names) {
+        const sel = `meta[name="${n}" i], meta[property="${n}" i]`;
+        let el;
+        try { el = document.querySelector(sel); } catch { el = null; }
+        const v = el?.getAttribute("content");
+        if (v && v.trim()) return v.trim();
+      }
+      return "";
+    };
+    const authorFromLd = (obj) => {
+      const a = obj && obj.author;
+      if (!a) return "";
+      if (typeof a === "string") return a;
+      if (Array.isArray(a)) {
+        return a.map((x) => (typeof x === "string" ? x : (x && x.name) || "")).filter(Boolean).join(", ");
+      }
+      if (typeof a === "object" && a.name) return String(a.name);
+      return "";
+    };
+    try {
+      const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+      for (const s of scripts) {
+        let data;
+        try { data = JSON.parse(s.textContent || "null"); } catch { continue; }
+        if (!data) continue;
+        const nodes = Array.isArray(data)
+          ? data
+          : (data["@graph"] && Array.isArray(data["@graph"]) ? data["@graph"] : [data]);
+        for (const obj of nodes) {
+          if (!obj || typeof obj !== "object") continue;
+          if (!author) {
+            const cand = authorFromLd(obj);
+            if (cand) author = cand;
+          }
+          if (!publishedAt) {
+            publishedAt = String(obj.datePublished || obj.dateCreated || obj.dateModified || "");
+          }
+          if (author && publishedAt) break;
+        }
+        if (author && publishedAt) break;
+      }
+    } catch { /* ignore JSON-LD failures */ }
+    if (!author) author = pickMeta(["author", "article:author", "parsely-author", "sailthru.author", "twitter:creator", "byl", "DC.creator"]);
+    if (!publishedAt) publishedAt = pickMeta(["article:published_time", "article:published", "datePublished", "date", "pubdate", "publication_date", "parsely-pub-date", "sailthru.date", "DC.date.issued"]);
+    if (!publishedAt) {
+      let t;
+      try { t = document.querySelector("time[datetime], time[pubdate]"); } catch { t = null; }
+      if (t) publishedAt = t.getAttribute("datetime") || (t.textContent || "").trim();
+    }
+    if (!author) {
+      let el;
+      try {
+        el = document.querySelector(
+          '[rel="author"], [itemprop="author"] [itemprop="name"], [itemprop="author"], .byline-name, .byline a, .author-name, .author a, .c-byline__author, .Byline a, [data-testid="byline-name"]',
+        );
+      } catch { el = null; }
+      if (el) author = (el.textContent || "").trim();
+    }
+    // If author still missing, try a .byline / .author block's full text.
+    if (!author) {
+      let el;
+      try { el = document.querySelector(".byline, .author, [class*='byline' i]"); } catch { el = null; }
+      if (el) {
+        let raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+        raw = raw.replace(/^\s*(by|written by|posted by)\s+/i, "");
+        author = raw;
+      }
+    }
+    author = String(author || "").replace(/^\s*by\s+/i, "").replace(/\s+/g, " ").trim().slice(0, 200);
+    publishedAt = String(publishedAt || "").trim().slice(0, 64);
+    return { author, publishedAt };
+  }
+  const byline = (() => { try { return scrapeByline(); } catch { return { author: "", publishedAt: "" }; } })();
   try {
     const sel = window.getSelection && window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-      return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "" };
+      return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "", author: byline.author, publishedAt: byline.publishedAt };
     }
     const range = sel.getRangeAt(0);
     const selectionText = sel.toString();
@@ -362,9 +460,9 @@ function __qtiCaptureSelection(opts) {
       if (nearestHeading) break;
       cur = cur.parentNode;
     }
-    return { selectionText, selectionHtml, contextBefore, contextAfter, nearestHeading };
+    return { selectionText, selectionHtml, contextBefore, contextAfter, nearestHeading, author: byline.author, publishedAt: byline.publishedAt };
   } catch (err) {
-    return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "", error: String(err && err.message || err) };
+    return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "", author: byline.author || "", publishedAt: byline.publishedAt || "", error: String(err && err.message || err) };
   }
 }
 
@@ -451,6 +549,8 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
     contextBefore: enriched?.contextBefore ?? "",
     contextAfter: enriched?.contextAfter ?? "",
     nearestHeading: enriched?.nearestHeading ?? "",
+    author: enriched?.author ?? "",
+    publishedAt: enriched?.publishedAt ?? "",
     pageUrl: info.pageUrl ?? tab?.url ?? "",
     pageTitle: tab?.title ?? "",
     frameUrl: info.frameUrl ?? "",
@@ -535,6 +635,8 @@ async function __qtiBuildQuoteFromActiveTab() {
       contextBefore: enriched?.contextBefore ?? "",
       contextAfter: enriched?.contextAfter ?? "",
       nearestHeading: enriched?.nearestHeading ?? "",
+      author: enriched?.author ?? "",
+      publishedAt: enriched?.publishedAt ?? "",
       pageUrl: tab.url ?? "",
       pageTitle: tab.title ?? "",
       frameUrl: "",

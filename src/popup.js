@@ -303,6 +303,8 @@ function buildMarkdownBody(q) {
     }
   }
   if (q.nearestHeading) lines.push(`**Section:** ${q.nearestHeading}`);
+  if (q.author) lines.push(`**Author:** ${q.author}`);
+  if (q.publishedAt) lines.push(`**Published:** ${formatPublishDate(q.publishedAt)}`);
   if (q.screenshot && q.screenshot.dataUrl) {
     const dim = (q.screenshot.width && q.screenshot.height)
       ? `${q.screenshot.width}×${q.screenshot.height}`
@@ -311,6 +313,20 @@ function buildMarkdownBody(q) {
   }
   if (q.capturedAt) lines.push(`**Captured:** ${q.capturedAt}`);
   return lines.join("\n").trim();
+}
+
+function formatPublishDate(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  const t = Date.parse(s);
+  if (Number.isFinite(t)) {
+    const d = new Date(t);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+  return s.slice(0, 64);
 }
 
 function formatBytes(n) {
@@ -427,6 +443,8 @@ function renderTemplate(tmpl, q) {
   const sourceUrlAnchor = buildSourceUrlWithAnchor(q);
   const section = q?.nearestHeading || "";
   const captured = q?.capturedAt || "";
+  const author = q?.author || "";
+  const publishedAt = formatPublishDate(q?.publishedAt);
   const ctxBefore = (q?.contextBefore || "").trim();
   const ctxAfter = (q?.contextAfter || "").trim();
   let screenshotNote = "";
@@ -444,6 +462,8 @@ function renderTemplate(tmpl, q) {
     captured,
     context_before: ctxBefore,
     context_after: ctxAfter,
+    author,
+    published_at: publishedAt,
     screenshot_note: screenshotNote,
     host: hostnameOf(q?.pageUrl),
   };
@@ -721,6 +741,8 @@ function normalizeBulkQuotes(list) {
       contextBefore: String(raw.contextBefore || "").slice(0, 4000),
       contextAfter: String(raw.contextAfter || "").slice(0, 4000),
       nearestHeading: String(raw.nearestHeading || "").slice(0, 256),
+      author: String(raw.author || "").slice(0, 200),
+      publishedAt: String(raw.publishedAt || "").slice(0, 64),
       pageUrl,
       pageTitle: String(raw.pageTitle || "").slice(0, 512),
       screenshot: raw.screenshot && typeof raw.screenshot === "object" ? raw.screenshot : null,
@@ -810,7 +832,7 @@ async function dataUrlToBlob(dataUrl) {
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
     parseRepo, parseLabels, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildSourceUrlWithAnchor, deriveScreenshotFilename,
-    formatBytes, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
+    formatBytes, formatPublishDate, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeDrafts, MAX_DRAFTS,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
@@ -914,6 +936,17 @@ function renderQuoteCard(q) {
   if (q.nearestHeading) {
     node.querySelector("[data-heading-row]").hidden = false;
     setText("nearestHeading", q.nearestHeading);
+  }
+
+  if (q.author) {
+    const r = node.querySelector("[data-byline-row]");
+    if (r) r.hidden = false;
+    setText("author", q.author);
+  }
+  if (q.publishedAt) {
+    const r = node.querySelector("[data-published-row]");
+    if (r) r.hidden = false;
+    setText("publishedAt", formatPublishDate(q.publishedAt));
   }
 
   setText("capturedAtPretty", fmtTime(q.capturedAt));
