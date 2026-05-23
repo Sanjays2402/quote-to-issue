@@ -515,6 +515,13 @@
         <div class="shot-frame">
           <img class="shot-img" data-field="shotImg" alt="Captured screenshot of the page" />
           <div class="shot-overlay">
+            <button class="shot-btn" type="button" data-action="annotate-shot" title="Annotate screenshot" aria-label="Annotate screenshot">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14 4l6 6"></path>
+                <path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"></path>
+              </svg>
+              <span>Mark</span>
+            </button>
             <button class="shot-btn" type="button" data-action="copy-shot" title="Copy screenshot to clipboard" aria-label="Copy screenshot">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="9" y="9" width="11" height="11" rx="2"></rect>
@@ -668,6 +675,89 @@
         </svg>
       </button>
     </li>
+  </template>
+
+  <template id="tpl-annotator">
+    <div class="annotator" data-annotator role="dialog" aria-modal="true" aria-label="Annotate screenshot">
+      <div class="annotator-backdrop" data-action="annotator-cancel" aria-hidden="true"></div>
+      <div class="annotator-panel glass">
+        <header class="annotator-head">
+          <div class="quote-meta">
+            <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14 4l6 6"></path>
+              <path d="M4 20l4-1 11-11-3-3L5 16l-1 4z"></path>
+            </svg>
+            <span class="meta-label">Annotate</span>
+          </div>
+          <button class="icon-btn ghost" type="button" data-action="annotator-cancel" title="Cancel" aria-label="Cancel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+            </svg>
+          </button>
+        </header>
+
+        <div class="annotator-toolbar" role="toolbar" aria-label="Annotation tools">
+          <div class="annotator-tools" role="group" aria-label="Tool">
+            <button class="tool-btn" type="button" data-tool="rect" data-active="true" title="Rectangle" aria-label="Rectangle tool" aria-pressed="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="4" y="5" width="16" height="14" rx="2"></rect>
+              </svg>
+              <span>Box</span>
+            </button>
+            <button class="tool-btn" type="button" data-tool="arrow" title="Arrow" aria-label="Arrow tool" aria-pressed="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 19L19 5"></path>
+                <path d="M11 5h8v8"></path>
+              </svg>
+              <span>Arrow</span>
+            </button>
+          </div>
+
+          <div class="annotator-swatches" role="group" aria-label="Color">
+            <button class="tool-swatch" type="button" data-color="#ef4444" data-active="true" aria-label="Red" aria-pressed="true" style="--swatch:#ef4444"></button>
+            <button class="tool-swatch" type="button" data-color="#f59e0b" aria-label="Amber" aria-pressed="false" style="--swatch:#f59e0b"></button>
+            <button class="tool-swatch" type="button" data-color="#10b981" aria-label="Green" aria-pressed="false" style="--swatch:#10b981"></button>
+            <button class="tool-swatch" type="button" data-color="#3b82f6" aria-label="Blue" aria-pressed="false" style="--swatch:#3b82f6"></button>
+          </div>
+
+          <div class="annotator-spacer"></div>
+
+          <button class="tool-btn ghost" type="button" data-action="annotator-undo" title="Undo" aria-label="Undo" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 14L4 9l5-5"></path>
+              <path d="M4 9h10a6 6 0 0 1 0 12h-3"></path>
+            </svg>
+            <span>Undo</span>
+          </button>
+          <button class="tool-btn ghost" type="button" data-action="annotator-clear" title="Clear all" aria-label="Clear all" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+              <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path>
+            </svg>
+            <span>Clear</span>
+          </button>
+        </div>
+
+        <div class="annotator-canvas-wrap" data-field="annotator-canvas-wrap">
+          <canvas class="annotator-canvas" data-field="annotator-canvas"></canvas>
+        </div>
+
+        <footer class="annotator-actions">
+          <span class="annotator-hint" data-field="annotator-hint">Drag on the image to draw. Esc to cancel.</span>
+          <div class="annotator-actions-right">
+            <button class="btn ghost" type="button" data-action="annotator-cancel">
+              <span>Cancel</span>
+            </button>
+            <button class="btn primary" type="button" data-action="annotator-save">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 13l4 4L19 7"></path>
+              </svg>
+              <span>Save</span>
+            </button>
+          </div>
+        </footer>
+      </div>
+    </div>
   </template>
 
   <script type="module" src="popup.js"></script>

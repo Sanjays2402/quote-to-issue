@@ -1193,6 +1193,231 @@ if (typeof globalThis !== "undefined") {
 }
 
 // ---------------------------------------------------------------------------
+// Annotator — draw rectangles/arrows over the captured screenshot
+// ---------------------------------------------------------------------------
+const ANNOTATOR_PALETTE = ["#ef4444", "#f59e0b", "#10b981", "#3b82f6"];
+
+function drawAnnotatorShape(ctx, shape, scale) {
+  if (!shape) return;
+  ctx.save();
+  ctx.strokeStyle = shape.color || "#ef4444";
+  ctx.fillStyle = shape.color || "#ef4444";
+  const lw = Math.max(2, Math.round(3 * scale));
+  ctx.lineWidth = lw;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  if (shape.type === "rect") {
+    const x = Math.min(shape.x1, shape.x2);
+    const y = Math.min(shape.y1, shape.y2);
+    const w = Math.abs(shape.x2 - shape.x1);
+    const h = Math.abs(shape.y2 - shape.y1);
+    const r = Math.min(8 * scale, Math.min(w, h) / 4);
+    ctx.beginPath();
+    if (typeof ctx.roundRect === "function" && r > 0) {
+      ctx.roundRect(x, y, w, h, r);
+    } else {
+      ctx.rect(x, y, w, h);
+    }
+    ctx.stroke();
+  } else if (shape.type === "arrow") {
+    const { x1, y1, x2, y2 } = shape;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const head = Math.max(10, lw * 4);
+    const a1 = angle + Math.PI - Math.PI / 6;
+    const a2 = angle + Math.PI + Math.PI / 6;
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 + head * Math.cos(a1), y2 + head * Math.sin(a1));
+    ctx.lineTo(x2 + head * Math.cos(a2), y2 + head * Math.sin(a2));
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function renderAnnotatorCanvas(ctx, img, shapes, scale) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  ctx.drawImage(img, 0, 0, ctx.canvas.width, ctx.canvas.height);
+  for (const s of shapes) drawAnnotatorShape(ctx, s, scale);
+}
+
+async function openAnnotator(quote) {
+  const shot = quote?.screenshot;
+  if (!shot?.dataUrl) return;
+  const tpl = document.getElementById("tpl-annotator");
+  if (!tpl) return;
+
+  const frag = tpl.content.cloneNode(true);
+  const overlay = frag.querySelector("[data-annotator]");
+  document.body.appendChild(overlay);
+
+  // Load image first so we know native size.
+  const img = new Image();
+  await new Promise((resolve, reject) => {
+    img.onload = resolve;
+    img.onerror = () => reject(new Error("image load failed"));
+    img.src = shot.dataUrl;
+  });
+  const nativeW = img.naturalWidth || shot.width || 1280;
+  const nativeH = img.naturalHeight || shot.height || 720;
+
+  const canvas = overlay.querySelector('[data-field="annotator-canvas"]');
+  const wrap = overlay.querySelector('[data-field="annotator-canvas-wrap"]');
+  canvas.width = nativeW;
+  canvas.height = nativeH;
+  // CSS sizing: fit canvas inside wrap maintaining aspect ratio. The wrap has
+  // a constrained max-width/max-height in CSS; canvas just stretches to fit.
+  canvas.style.width = "100%";
+  canvas.style.height = "auto";
+  const ctx = canvas.getContext("2d");
+
+  const shapes = [];
+  let tool = "rect";
+  let color = ANNOTATOR_PALETTE[0];
+  let drawing = null;
+  let scale = 1;
+
+  const undoBtn = overlay.querySelector('[data-action="annotator-undo"]');
+  const clearBtn = overlay.querySelector('[data-action="annotator-clear"]');
+  const saveBtn = overlay.querySelector('[data-action="annotator-save"]');
+
+  function refreshButtons() {
+    const has = shapes.length > 0;
+    if (undoBtn) undoBtn.disabled = !has;
+    if (clearBtn) clearBtn.disabled = !has;
+  }
+
+  function repaint() {
+    const previewShapes = drawing ? shapes.concat([drawing]) : shapes;
+    renderAnnotatorCanvas(ctx, img, previewShapes, scale);
+  }
+
+  function updateScale() {
+    // scale = native-px per CSS-px. Higher scale → thicker strokes so they
+    // render visibly when the canvas is shrunk to fit the panel.
+    const cssW = canvas.getBoundingClientRect().width || nativeW;
+    scale = cssW > 0 ? nativeW / cssW : 1;
+  }
+
+  function pointerToNative(ev) {
+    const r = canvas.getBoundingClientRect();
+    const x = ((ev.clientX - r.left) / r.width) * nativeW;
+    const y = ((ev.clientY - r.top) / r.height) * nativeH;
+    return {
+      x: Math.max(0, Math.min(nativeW, x)),
+      y: Math.max(0, Math.min(nativeH, y)),
+    };
+  }
+
+  function onPointerDown(ev) {
+    if (ev.button !== undefined && ev.button !== 0) return;
+    ev.preventDefault();
+    canvas.setPointerCapture?.(ev.pointerId);
+    updateScale();
+    const p = pointerToNative(ev);
+    drawing = { type: tool, color, x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+    repaint();
+  }
+  function onPointerMove(ev) {
+    if (!drawing) return;
+    const p = pointerToNative(ev);
+    drawing.x2 = p.x;
+    drawing.y2 = p.y;
+    repaint();
+  }
+  function onPointerUp(ev) {
+    if (!drawing) return;
+    try { canvas.releasePointerCapture?.(ev.pointerId); } catch {}
+    const dx = Math.abs(drawing.x2 - drawing.x1);
+    const dy = Math.abs(drawing.y2 - drawing.y1);
+    if (dx + dy > 6) shapes.push(drawing);
+    drawing = null;
+    refreshButtons();
+    repaint();
+  }
+
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+
+  overlay.querySelectorAll("[data-tool]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tool = btn.dataset.tool === "arrow" ? "arrow" : "rect";
+      overlay.querySelectorAll("[data-tool]").forEach((b) => {
+        const active = b === btn;
+        if (active) b.setAttribute("data-active", "true"); else b.removeAttribute("data-active");
+        b.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+    });
+  });
+  overlay.querySelectorAll("[data-color]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      color = btn.dataset.color || ANNOTATOR_PALETTE[0];
+      overlay.querySelectorAll("[data-color]").forEach((b) => {
+        const active = b === btn;
+        if (active) b.setAttribute("data-active", "true"); else b.removeAttribute("data-active");
+        b.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+    });
+  });
+
+  undoBtn?.addEventListener("click", () => { shapes.pop(); refreshButtons(); repaint(); });
+  clearBtn?.addEventListener("click", () => { shapes.length = 0; refreshButtons(); repaint(); });
+
+  function close() {
+    document.removeEventListener("keydown", onKey);
+    window.removeEventListener("resize", onResize);
+    overlay.remove();
+  }
+  function onKey(ev) {
+    if (ev.key === "Escape") { ev.preventDefault(); close(); }
+  }
+  function onResize() { updateScale(); repaint(); }
+  document.addEventListener("keydown", onKey);
+  window.addEventListener("resize", onResize);
+
+  overlay.querySelectorAll('[data-action="annotator-cancel"]').forEach((b) => {
+    b.addEventListener("click", (ev) => { ev.preventDefault(); close(); });
+  });
+
+  saveBtn?.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    try {
+      // Always render final shapes to a clean canvas at native res.
+      renderAnnotatorCanvas(ctx, img, shapes, 1);
+      const dataUrl = canvas.toDataURL("image/png");
+      const bytes = Math.floor((dataUrl.length - "data:image/png;base64,".length) * 3 / 4);
+      const next = {
+        ...quote,
+        screenshot: {
+          ...quote.screenshot,
+          dataUrl,
+          width: nativeW,
+          height: nativeH,
+          bytes,
+          annotated: true,
+          annotatedAt: new Date().toISOString(),
+        },
+      };
+      await chrome.storage.local.set({ [STORAGE_KEYS.pendingQuote]: next });
+      close();
+    } catch (err) {
+      console.warn(LOG, "annotator save failed", err);
+      saveBtn.disabled = false;
+    }
+  });
+
+  // First paint after layout.
+  requestAnimationFrame(() => { updateScale(); repaint(); refreshButtons(); });
+}
+
+// ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 
@@ -1320,6 +1545,10 @@ function renderQuoteCard(q) {
 
     const copyBtn = node.querySelector('[data-action="copy-shot"]');
     const dlBtn = node.querySelector('[data-action="download-shot"]');
+    const markBtn = node.querySelector('[data-action="annotate-shot"]');
+    markBtn?.addEventListener("click", () => {
+      openAnnotator(q).catch((err) => console.warn(LOG, "annotator failed", err));
+    });
     copyBtn?.addEventListener("click", async () => {
       const orig = copyBtn.querySelector("span")?.textContent;
       try {
