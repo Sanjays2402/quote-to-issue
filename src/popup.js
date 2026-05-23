@@ -15,7 +15,11 @@ const STORAGE_KEYS = Object.freeze({
   formState: "qti.formState",
   recentRepos: "qti.recentRepos",
   repoTemplates: "qti.repoTemplates",
+  drafts: "qti.drafts",
 });
+
+const MAX_DRAFTS = 25;
+const MAX_DRAFT_BODY_LEN = 32_000;
 
 const MAX_TEMPLATE_LEN = 8000;
 const DEFAULT_TEMPLATE = `## Summary\n\n\n## Quote\n\n{{quote_blockquote}}\n\n## Source\n\n- **Page:** [{{source_title}}]({{source_url}})\n- **Section:** {{section}}\n- **Captured:** {{captured}}\n\n{{screenshot_note}}\n`;
@@ -28,6 +32,8 @@ const tplQuote = document.getElementById("tpl-quote");
 const tplForm = document.getElementById("tpl-form");
 const tplSettings = document.getElementById("tpl-settings");
 const tplSuccess = document.getElementById("tpl-success");
+const tplDrafts = document.getElementById("tpl-drafts");
+const tplDraftRow = document.getElementById("tpl-draft-row");
 
 let settingsOpen = false;
 
@@ -255,6 +261,64 @@ function filterRecentRepos(recents, query) {
   return recents.filter((r) => r.value.toLowerCase().includes(q));
 }
 
+// ---------------------------------------------------------------------------
+// Drafts — save in-progress issues locally before posting
+// ---------------------------------------------------------------------------
+
+function makeDraftId() {
+  const r = (globalThis.crypto?.randomUUID && crypto.randomUUID()) || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `d_${r}`;
+}
+
+function normalizeDrafts(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const id = typeof raw.id === "string" && raw.id ? raw.id : makeDraftId();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const title = String(raw.title || "").slice(0, 256);
+    const repo = String(raw.repo || "").slice(0, 220);
+    const labels = String(raw.labels || "").slice(0, 512);
+    const body = String(raw.body || "").slice(0, MAX_DRAFT_BODY_LEN);
+    const quote = raw.quote && typeof raw.quote === "object" ? raw.quote : null;
+    const createdAt = typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString();
+    const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : createdAt;
+    if (!title.trim() && !body.trim() && !(quote && quote.selectionText)) continue;
+    out.push({ id, title, repo, labels, body, quote, createdAt, updatedAt });
+  }
+  out.sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
+  return out.slice(0, MAX_DRAFTS);
+}
+
+async function getDrafts() {
+  if (!chrome?.storage?.local) return [];
+  const out = await chrome.storage.local.get(STORAGE_KEYS.drafts);
+  return normalizeDrafts(out[STORAGE_KEYS.drafts]);
+}
+
+async function saveDraft(draft) {
+  if (!chrome?.storage?.local) throw new Error("storage unavailable");
+  const cur = await getDrafts();
+  const now = new Date().toISOString();
+  const id = draft?.id || makeDraftId();
+  const without = cur.filter((d) => d.id !== id);
+  const merged = normalizeDrafts([
+    { ...draft, id, createdAt: draft?.createdAt || now, updatedAt: now },
+    ...without,
+  ]);
+  await chrome.storage.local.set({ [STORAGE_KEYS.drafts]: merged });
+  return merged.find((d) => d.id === id) || merged[0];
+}
+
+async function deleteDraft(id) {
+  if (!id || !chrome?.storage?.local) return;
+  const cur = await getDrafts();
+  await chrome.storage.local.set({ [STORAGE_KEYS.drafts]: cur.filter((d) => d.id !== id) });
+}
+
 async function getRecentRepos() {
   if (!chrome?.storage?.local) return [];
   const out = await chrome.storage.local.get(STORAGE_KEYS.recentRepos);
@@ -302,6 +366,7 @@ if (typeof globalThis !== "undefined") {
     parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename,
     formatBytes, normalizeRecentRepos, filterRecentRepos,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
+    normalizeDrafts, MAX_DRAFTS,
   };
 }
 
@@ -310,7 +375,63 @@ if (typeof globalThis !== "undefined") {
 // ---------------------------------------------------------------------------
 
 function renderEmpty() {
-  root.replaceChildren(tplEmpty.content.cloneNode(true));
+  const frag = document.createDocumentFragment();
+  frag.appendChild(tplEmpty.content.cloneNode(true));
+  root.replaceChildren(frag);
+  // Append drafts list if any exist.
+  getDrafts().then((drafts) => {
+    if (!drafts.length) return;
+    if (!tplDrafts || !tplDraftRow) return;
+    const section = tplDrafts.content.cloneNode(true);
+    const list = section.querySelector("[data-drafts-list]");
+    const count = section.querySelector('[data-field="drafts-count"]');
+    if (count) count.textContent = `${drafts.length} · newest first`;
+    for (const d of drafts) {
+      const row = tplDraftRow.content.cloneNode(true);
+      const titleEl = row.querySelector('[data-field="draft-title"]');
+      const repoEl = row.querySelector('[data-field="draft-repo"]');
+      const timeEl = row.querySelector('[data-field="draft-time"]');
+      const snipEl = row.querySelector('[data-field="draft-snippet"]');
+      titleEl.textContent = d.title || "(untitled draft)";
+      repoEl.textContent = d.repo || "no repo";
+      timeEl.textContent = fmtRelative(d.updatedAt);
+      const snippet = (d.quote?.selectionText || d.body || "").replace(/\s+/g, " ").trim().slice(0, 120);
+      snipEl.textContent = snippet;
+      row.querySelector('[data-action="load-draft"]').addEventListener("click", () => loadDraft(d));
+      row.querySelector('[data-action="delete-draft"]').addEventListener("click", async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        await deleteDraft(d.id);
+        renderEmpty();
+      });
+      list.appendChild(row);
+    }
+    root.appendChild(section);
+  }).catch(() => {});
+}
+
+async function loadDraft(draft) {
+  if (!draft) return;
+  const q = draft.quote && draft.quote.selectionText ? draft.quote : {
+    selectionText: "",
+    pageUrl: "",
+    pageTitle: "",
+    capturedAt: draft.createdAt || new Date().toISOString(),
+  };
+  if (chrome?.storage?.local && draft.quote?.selectionText) {
+    await chrome.storage.local.set({ [STORAGE_KEYS.pendingQuote]: draft.quote });
+  }
+  await saveFormState({
+    repo: draft.repo || "",
+    title: draft.title || "",
+    labels: draft.labels || "",
+    draftId: draft.id,
+  });
+  const frag = document.createDocumentFragment();
+  if (draft.quote?.selectionText) frag.appendChild(renderQuoteCard(draft.quote));
+  frag.appendChild(buildFormNode(q, {
+    repo: draft.repo, title: draft.title, labels: draft.labels, draftId: draft.id,
+  }));
+  root.replaceChildren(frag);
 }
 
 function renderQuoteCard(q) {
@@ -439,6 +560,9 @@ function buildFormNode(q, state) {
   const previewBody = node.querySelector('[data-field="preview-body"]');
   const toggleBtn = node.querySelector('[data-action="toggle-preview"]');
   const submitBtn = node.querySelector('[data-action="submit"]');
+  const saveDraftBtn = node.querySelector('[data-action="save-draft"]');
+  const draftStatus = node.querySelector('[data-field="draft-status"]');
+  let activeDraftId = state.draftId || null;
   const recentsBtn = node.querySelector('[data-action="toggle-recents"]');
   const recentsPanel = node.querySelector('[data-field="repo-recents"]');
   const tmplBlock = node.querySelector("[data-template-block]");
@@ -751,6 +875,50 @@ function buildFormNode(q, state) {
     saveFormState({ labels: labelsInput.value });
   });
 
+  // --- Draft save ----------------------------------------------------------
+  function showDraftStatus(msg, kind) {
+    if (!draftStatus) return;
+    draftStatus.textContent = msg;
+    draftStatus.dataset.kind = kind || "ok";
+    draftStatus.hidden = !msg;
+    if (msg) {
+      clearTimeout(showDraftStatus._t);
+      showDraftStatus._t = setTimeout(() => { draftStatus.hidden = true; }, 2400);
+    }
+  }
+  function refreshDraftBtn() {
+    if (!saveDraftBtn) return;
+    const hasContent = (titleInput.value.trim() || labelsInput.value.trim() || (q?.selectionText || "").trim());
+    saveDraftBtn.disabled = !hasContent;
+  }
+  refreshDraftBtn();
+  titleInput.addEventListener("input", refreshDraftBtn);
+  labelsInput.addEventListener("input", refreshDraftBtn);
+  repoInput.addEventListener("input", refreshDraftBtn);
+
+  saveDraftBtn?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    if (saveDraftBtn.disabled) return;
+    saveDraftBtn.disabled = true;
+    try {
+      const saved = await saveDraft({
+        id: activeDraftId,
+        title: titleInput.value.trim(),
+        repo: repoInput.value.trim(),
+        labels: labelsInput.value,
+        body: effectiveBody(),
+        quote: q || null,
+      });
+      activeDraftId = saved?.id || activeDraftId;
+      await saveFormState({ draftId: activeDraftId });
+      showDraftStatus("Draft saved locally.", "ok");
+    } catch (err) {
+      showDraftStatus(`Save failed: ${err?.message || err}`, "err");
+    } finally {
+      refreshDraftBtn();
+    }
+  });
+
   toggleBtn.addEventListener("click", () => {
     const shown = !previewBox.hidden;
     previewBox.hidden = shown;
@@ -795,8 +963,9 @@ function buildFormNode(q, state) {
       if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
       const created = reply.result || {};
       await addRecentRepo(repo.value).catch(() => {});
+      if (activeDraftId) await deleteDraft(activeDraftId).catch(() => {});
       await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);
-      await saveFormState({ title: "" });
+      await saveFormState({ title: "", draftId: null });
       renderSuccess({ repo: repo.value, ...created });
     } catch (err) {
       errorEl.hidden = false;

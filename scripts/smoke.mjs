@@ -70,6 +70,13 @@ for (const needle of [
   'data-action="save-template"',
   'data-action="clear-template"',
   'data-action="insert-default-template"',
+  'data-action="save-draft"',
+  'data-field="draft-status"',
+  'tpl-drafts',
+  'tpl-draft-row',
+  'data-drafts-list',
+  'data-action="load-draft"',
+  'data-action="delete-draft"',
 ]) {
   if (!popupHtml.includes(needle)) { console.error("popup.html missing token:", needle); process.exit(1); }
 }
@@ -96,12 +103,16 @@ for (const needle of [
   "setRepoTemplate",
   "clearRepoTemplate",
   "qti.repoTemplates",
+  "normalizeDrafts",
+  "saveDraft",
+  "deleteDraft",
+  "qti.drafts",
 ]) {
   if (!popupJs.includes(needle)) { console.error("popup.js missing token:", needle); process.exit(1); }
 }
 
 const popupCss = fs.readFileSync("src/popup.css", "utf8");
-for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn", ".repo-recents", ".repo-recent", ".template-body", ".template-block", ".template-actions"]) {
+for (const needle of [".form ", ".input", ".chip", ".btn", ".preview-body", ".shot", ".shot-img", ".shot-btn", ".repo-recents", ".repo-recent", ".template-body", ".template-block", ".template-actions", ".drafts", ".draft-row", ".draft-load", ".draft-remove", ".draft-status"]) {
   if (!popupCss.includes(needle)) { console.error("popup.css missing token:", needle); process.exit(1); }
 }
 
@@ -194,6 +205,29 @@ const bodyShot = buildMarkdownBody({
 if (!bodyShot.includes("**Screenshot:**") || !bodyShot.includes("1280\u00d7720")) { console.error("buildMarkdownBody screenshot line missing"); process.exit(1); }
 
 console.log("\u2713 smoke ok");
+
+// --- Drafts ----------------------------------------------------------------
+const { normalizeDrafts, MAX_DRAFTS } = globalThis.__qti;
+if (typeof normalizeDrafts !== "function") { console.error("normalizeDrafts missing"); process.exit(1); }
+if (typeof MAX_DRAFTS !== "number" || MAX_DRAFTS < 5) { console.error("MAX_DRAFTS invalid"); process.exit(1); }
+if (normalizeDrafts(null).length !== 0) { console.error("normalizeDrafts(null) should be []"); process.exit(1); }
+const draftsIn = [
+  { id: "a", title: "first", repo: "owner/repo", body: "hi", updatedAt: "2026-05-22T10:00:00Z" },
+  { id: "b", title: "", body: "", quote: null, updatedAt: "2026-05-23T10:00:00Z" }, // empty -> dropped
+  { id: "a", title: "dup", body: "x", updatedAt: "2026-05-23T11:00:00Z" }, // dedupe by id (first wins)
+  { id: "c", title: "newer", body: "y", updatedAt: "2026-05-23T12:00:00Z" },
+  { id: "d", quote: { selectionText: "only a quote" }, updatedAt: "2026-05-22T09:00:00Z" },
+];
+const draftsOut = normalizeDrafts(draftsIn);
+if (draftsOut.length !== 3) { console.error("normalizeDrafts length wrong:", draftsOut.map((d) => d.id)); process.exit(1); }
+if (draftsOut[0].id !== "c") { console.error("normalizeDrafts sort wrong:", draftsOut.map((d) => d.id)); process.exit(1); }
+if (draftsOut[1].id !== "a" || draftsOut[1].title !== "first") { console.error("normalizeDrafts dedupe wrong:", draftsOut); process.exit(1); }
+const bigDrafts = Array.from({ length: MAX_DRAFTS + 7 }, (_, i) => ({ id: `id-${i}`, title: `t${i}`, updatedAt: new Date(2026, 0, 1 + i).toISOString() }));
+if (normalizeDrafts(bigDrafts).length !== MAX_DRAFTS) { console.error("normalizeDrafts should cap at MAX_DRAFTS"); process.exit(1); }
+const longBody = "x".repeat(50_000);
+const clipped = normalizeDrafts([{ id: "big", title: "t", body: longBody, updatedAt: "2026-05-23T10:00:00Z" }]);
+if (clipped[0].body.length > 32_000) { console.error("normalizeDrafts should clip body"); process.exit(1); }
+console.log("\u2713 drafts smoke ok");
 
 // --- Token storage (encrypted PAT) ----------------------------------------
 await import("../src/token.js").catch((err) => { console.error("token.js import failed:", err.message); process.exit(1); });

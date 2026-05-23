@@ -145,8 +145,18 @@
         <pre class="preview-body" data-field="preview-body"></pre>
       </div>
 
+      <p class="draft-status" data-field="draft-status" hidden></p>
+
       <footer class="form-actions">
         <p class="hint inline-hint" data-field="submit-hint">Add a GitHub token in settings to enable submission.</p>
+        <button class="btn ghost btn-sm" type="button" data-action="save-draft" title="Save this issue locally to finish later">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 4h11l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"></path>
+            <path d="M8 4v5h8"></path>
+            <path d="M8 14h8"></path><path d="M8 18h5"></path>
+          </svg>
+          <span>Save draft</span>
+        </button>
         <button class="btn primary" type="button" data-action="submit" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M5 12h14"></path><path d="M13 5l7 7-7 7"></path>
@@ -155,6 +165,41 @@
         </button>
       </footer>
     </section>
+  </template>
+
+  <template id="tpl-drafts">
+    <section class="drafts glass" data-drafts>
+      <header class="drafts-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 4h11l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"></path>
+            <path d="M8 4v5h8"></path>
+          </svg>
+          <span class="meta-label">Saved drafts</span>
+        </div>
+        <span class="drafts-count" data-field="drafts-count"></span>
+      </header>
+      <ul class="drafts-list" data-drafts-list role="list"></ul>
+    </section>
+  </template>
+
+  <template id="tpl-draft-row">
+    <li class="draft-row" role="listitem">
+      <button class="draft-load" type="button" data-action="load-draft" title="Resume this draft">
+        <span class="draft-title" data-field="draft-title"></span>
+        <span class="draft-meta">
+          <span class="draft-repo" data-field="draft-repo"></span>
+          <span class="draft-dot" aria-hidden="true"></span>
+          <span class="draft-time" data-field="draft-time"></span>
+        </span>
+        <span class="draft-snippet" data-field="draft-snippet"></span>
+      </button>
+      <button class="draft-remove" type="button" data-action="delete-draft" aria-label="Delete draft" title="Delete draft">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path>
+        </svg>
+      </button>
+    </li>
   </template>
 
   <template id="tpl-settings">

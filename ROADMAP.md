@@ -11,7 +11,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Auto-screenshot of visible tab attached as image
 - [x] Multi-repo support with recent-repos dropdown
 - [x] Issue templates per repo
-- [ ] Draft mode: save locally before posting
+- [x] Draft mode: save locally before posting
 - [ ] Bulk-file from multiple selections on one page
 - [ ] Liquid-glass popup UI
 - [ ] Dark/light theme
