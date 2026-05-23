@@ -24,7 +24,11 @@ const STORAGE_KEYS = Object.freeze({
   captureSettings: "qti.captureSettings",
   recentIssues: "qti.recentIssues",
   offlineQueue: "qti.offlineQueue",
+  quoteHistory: "qti.quoteHistory",
 });
+
+const MAX_QUOTE_HISTORY = 200;
+const QUOTE_HISTORY_SNIPPET_MAX = 600;
 
 const MAX_RECENT_ISSUES = 10;
 
@@ -226,6 +230,8 @@ const tplBulk = document.getElementById("tpl-bulk");
 const tplBulkRow = document.getElementById("tpl-bulk-row");
 const tplRecentIssues = document.getElementById("tpl-recent-issues");
 const tplRecentIssueRow = document.getElementById("tpl-recent-issue-row");
+const tplQuoteHistory = document.getElementById("tpl-quote-history");
+const tplQuoteHistoryRow = document.getElementById("tpl-quote-history-row");
 
 let settingsOpen = false;
 
@@ -1089,6 +1095,90 @@ async function removeRecentIssue(repo, number) {
 }
 
 // ---------------------------------------------------------------------------
+// Quote history — searchable archive of every filed quote.
+// ---------------------------------------------------------------------------
+function normalizeQuoteHistory(list) {
+  if (!Array.isArray(list)) return [];
+  const valid = [];
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const selectionText = String(raw.selectionText || "").slice(0, QUOTE_HISTORY_SNIPPET_MAX);
+    const title = String(raw.title || "").slice(0, 280);
+    if (!selectionText.trim() && !title.trim()) continue;
+    const repo = String(raw.repo || "").trim();
+    if (repo && !/^[^\s/]+\/[^\s/]+$/.test(repo)) continue;
+    const number = Number(raw.number);
+    const htmlUrl = String(raw.htmlUrl || "").trim();
+    const pageUrl = String(raw.pageUrl || "").slice(0, 800);
+    const pageTitle = String(raw.pageTitle || "").slice(0, 280);
+    const filedAt = typeof raw.filedAt === "string" ? raw.filedAt : new Date().toISOString();
+    const id = String(raw.id || `${repo}#${number}#${filedAt}`);
+    valid.push({
+      id, repo, number: Number.isFinite(number) && number > 0 ? number : 0,
+      htmlUrl: /^https?:\/\//.test(htmlUrl) ? htmlUrl : "",
+      title, selectionText, pageTitle, pageUrl, filedAt,
+    });
+  }
+  valid.sort((a, b) => (Date.parse(b.filedAt) || 0) - (Date.parse(a.filedAt) || 0));
+  const out = [];
+  const seen = new Set();
+  for (const v of valid) {
+    if (seen.has(v.id)) continue;
+    seen.add(v.id);
+    out.push(v);
+    if (out.length >= MAX_QUOTE_HISTORY) break;
+  }
+  return out;
+}
+
+function searchQuoteHistory(list, query) {
+  const items = Array.isArray(list) ? list : [];
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return items;
+  const terms = q.split(/\s+/).filter(Boolean);
+  if (!terms.length) return items;
+  const matches = [];
+  for (const it of items) {
+    const hay = `${it.title || ""}\n${it.selectionText || ""}\n${it.repo || ""}\n${it.pageTitle || ""}\n${it.pageUrl || ""}`.toLowerCase();
+    let hits = 0;
+    let ok = true;
+    for (const t of terms) {
+      if (hay.includes(t)) hits += 1;
+      else { ok = false; break; }
+    }
+    if (ok) matches.push({ item: it, score: hits });
+  }
+  matches.sort((a, b) => b.score - a.score || (Date.parse(b.item.filedAt) || 0) - (Date.parse(a.item.filedAt) || 0));
+  return matches.map((m) => m.item);
+}
+
+async function getQuoteHistory() {
+  if (!chrome?.storage?.local) return [];
+  const out = await chrome.storage.local.get(STORAGE_KEYS.quoteHistory);
+  return normalizeQuoteHistory(out[STORAGE_KEYS.quoteHistory]);
+}
+
+async function addQuoteHistory(entry) {
+  if (!chrome?.storage?.local) return;
+  const cur = await getQuoteHistory();
+  const stamped = { ...entry, filedAt: entry?.filedAt || new Date().toISOString() };
+  const merged = normalizeQuoteHistory([stamped, ...cur]);
+  await chrome.storage.local.set({ [STORAGE_KEYS.quoteHistory]: merged });
+}
+
+async function clearQuoteHistory() {
+  if (!chrome?.storage?.local) return;
+  await chrome.storage.local.remove(STORAGE_KEYS.quoteHistory);
+}
+
+async function removeQuoteHistoryEntry(id) {
+  if (!chrome?.storage?.local || !id) return;
+  const cur = await getQuoteHistory();
+  const next = cur.filter((e) => e.id !== id);
+  await chrome.storage.local.set({ [STORAGE_KEYS.quoteHistory]: next });
+}
+
+// ---------------------------------------------------------------------------
 // Offline queue — mirror of background's normalizer for popup consumers.
 // The background service worker owns the truth; popup only reads/clears.
 // ---------------------------------------------------------------------------
@@ -1283,6 +1373,7 @@ if (typeof globalThis !== "undefined") {
     normalizeDrafts, MAX_DRAFTS,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
     normalizeRecentIssues, MAX_RECENT_ISSUES,
+    normalizeQuoteHistory, searchQuoteHistory, MAX_QUOTE_HISTORY,
     normalizeOfflineQueue, MAX_OFFLINE_QUEUE, isRetryableErrorMessage,
     extractDupTokens, scoreDuplicateMatch, rankDuplicates,
     normalizeRepoIssueTypes, normalizeIssueType, issueTypeLabels, ISSUE_TYPE_PRESETS, ISSUE_TYPE_KEYS,
@@ -2380,10 +2471,20 @@ function buildFormNode(q, state) {
         appendOfflineQueueSection().catch(() => {});
         return;
       }
-      await addRecentRepo(repo.value).catch(() => {});
+      await addRecentRepo(repo.value);
       if (created?.number && created?.htmlUrl) {
         await addRecentIssue({ repo: repo.value, number: created.number, htmlUrl: created.htmlUrl, title }).catch(() => {});
       }
+      await addQuoteHistory({
+        id: created?.number ? `${repo.value}#${created.number}` : `${repo.value}#${Date.now()}`,
+        repo: repo.value,
+        number: created?.number || 0,
+        htmlUrl: created?.htmlUrl || "",
+        title,
+        selectionText: q?.selectionText || "",
+        pageTitle: q?.pageTitle || "",
+        pageUrl: q?.pageUrl || "",
+      }).catch(() => {});
       if (activeDraftId) await deleteDraft(activeDraftId).catch(() => {});
       await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);
       await saveFormState({ title: "", draftId: null });
@@ -2783,6 +2884,7 @@ async function loadPending() {
   await appendBulkSection();
   await appendRecentIssuesSection();
   await appendOfflineQueueSection();
+  await appendQuoteHistorySection();
 }
 
 async function appendRecentIssuesSection() {
@@ -2825,6 +2927,90 @@ async function appendRecentIssuesSection() {
   });
   root.appendChild(section);
   appendOfflineQueueSection().catch(() => {});
+  appendQuoteHistorySection().catch(() => {});
+}
+
+async function appendQuoteHistorySection(filter) {
+  if (!tplQuoteHistory || !tplQuoteHistoryRow) return;
+  for (const existing of root.querySelectorAll("[data-quote-history]")) existing.remove();
+  const all = await getQuoteHistory().catch(() => []);
+  if (!all.length) return;
+  const frag = tplQuoteHistory.content.cloneNode(true);
+  const section = frag.querySelector("[data-quote-history]");
+  const list = frag.querySelector("[data-quote-history-list]");
+  const count = frag.querySelector('[data-field="quote-history-count"]');
+  const status = frag.querySelector('[data-field="quote-history-status"]');
+  const input = frag.querySelector('[data-field="quote-history-query"]');
+  let query = String(filter || "");
+  if (input) input.value = query;
+
+  function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+  function highlight(text, terms) {
+    const safe = escapeHtml(String(text || ""));
+    if (!terms.length) return safe;
+    const pattern = new RegExp(`(${terms.map(escapeRe).join("|")})`, "gi");
+    return safe.replace(pattern, "<mark>$1</mark>");
+  }
+
+  function render() {
+    list.replaceChildren();
+    const q = query.trim().toLowerCase();
+    const terms = q ? q.split(/\s+/).filter(Boolean) : [];
+    const results = q ? searchQuoteHistory(all, q) : all;
+    if (count) count.textContent = q
+      ? `${results.length} of ${all.length}`
+      : `${all.length} · newest first`;
+    if (status) {
+      if (q && results.length === 0) {
+        status.textContent = "No matching quotes.";
+        status.hidden = false;
+      } else {
+        status.textContent = "";
+        status.hidden = true;
+      }
+    }
+    for (const it of results.slice(0, 50)) {
+      const row = tplQuoteHistoryRow.content.cloneNode(true);
+      const link = row.querySelector('[data-field="quote-history-link"]');
+      const titleEl = row.querySelector('[data-field="quote-history-title"]');
+      const snipEl = row.querySelector('[data-field="quote-history-snippet"]');
+      const repoEl = row.querySelector('[data-field="quote-history-repo"]');
+      const numEl = row.querySelector('[data-field="quote-history-number"]');
+      const timeEl = row.querySelector('[data-field="quote-history-time"]');
+      const removeBtn = row.querySelector('[data-action="remove-quote-history"]');
+      const url = it.htmlUrl || it.pageUrl || "";
+      if (url) { link.href = url; } else { link.removeAttribute("href"); }
+      titleEl.innerHTML = highlight(it.title || `Quote from ${it.repo || "page"}`, terms);
+      const snippet = String(it.selectionText || "").replace(/\s+/g, " ").trim().slice(0, 260);
+      snipEl.innerHTML = highlight(snippet, terms);
+      repoEl.textContent = it.repo || "";
+      numEl.textContent = it.number ? `#${it.number}` : "";
+      if (!it.number) numEl.hidden = true;
+      timeEl.textContent = fmtRelative(it.filedAt);
+      removeBtn?.addEventListener("click", async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        await removeQuoteHistoryEntry(it.id);
+        await appendQuoteHistorySection(query);
+      });
+      list.appendChild(row);
+    }
+  }
+
+  render();
+
+  if (input) {
+    let t = null;
+    input.addEventListener("input", () => {
+      query = input.value;
+      clearTimeout(t);
+      t = setTimeout(render, 120);
+    });
+  }
+  section.querySelector('[data-action="clear-quote-history"]')?.addEventListener("click", async () => {
+    await clearQuoteHistory();
+    await appendQuoteHistorySection();
+  });
+  root.appendChild(section);
 }
 
 async function appendOfflineQueueSection() {
@@ -3065,6 +3251,16 @@ async function appendBulkSection() {
         if (created?.number && created?.htmlUrl) {
           await addRecentIssue({ repo: repo.value, number: created.number, htmlUrl: created.htmlUrl, title }).catch(() => {});
         }
+        await addQuoteHistory({
+          id: created?.number ? `${repo.value}#${created.number}` : `${repo.value}#${q.id || Date.now()}`,
+          repo: repo.value,
+          number: created?.number || 0,
+          htmlUrl: created?.htmlUrl || "",
+          title,
+          selectionText: q?.selectionText || "",
+          pageTitle: q?.pageTitle || "",
+          pageUrl: q?.pageUrl || "",
+        }).catch(() => {});
         // Remove the successfully filed quote from storage so partial failure
         // leaves only the unfiled ones for retry.
         await removeBulkQuote(q.id).catch(() => {});

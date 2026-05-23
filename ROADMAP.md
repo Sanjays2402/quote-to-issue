@@ -34,6 +34,6 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Annotated screenshot: draw rectangle/arrow over capture before attaching
 - [x] Highlighted-selection screenshot mode (mask page, keep selection visible)
 - [x] Issue success toast with copy-link and open-in-tab actions
-- [ ] Quote history search: full-text search over previously filed quotes
+- [x] Quote history search: full-text search over previously filed quotes
 - [ ] Per-repo milestone picker populated from GitHub API
 - [ ] Privacy mode: scrub query params and auth tokens from captured URLs

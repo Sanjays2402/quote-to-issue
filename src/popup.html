@@ -739,6 +739,56 @@
     </li>
   </template>
 
+  <template id="tpl-quote-history">
+    <section class="quote-history glass" data-quote-history>
+      <header class="quote-history-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path>
+          </svg>
+          <span class="meta-label">Quote history</span>
+        </div>
+        <div class="quote-history-actions">
+          <span class="quote-history-count" data-field="quote-history-count"></span>
+          <button class="icon-btn ghost" type="button" data-action="clear-quote-history" title="Clear history" aria-label="Clear history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+              <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+      <div class="quote-history-search">
+        <svg viewBox="0 0 24 24" class="quote-history-search-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path>
+        </svg>
+        <input class="input quote-history-input" data-field="quote-history-query" type="search" placeholder="Search quote text, title, or repo" autocomplete="off" spellcheck="false" />
+      </div>
+      <p class="quote-history-status" data-field="quote-history-status" hidden></p>
+      <ul class="quote-history-list" data-quote-history-list role="list"></ul>
+    </section>
+  </template>
+
+  <template id="tpl-quote-history-row">
+    <li class="quote-history-row" role="listitem">
+      <a class="quote-history-link" data-field="quote-history-link" target="_blank" rel="noopener noreferrer">
+        <span class="quote-history-title" data-field="quote-history-title"></span>
+        <span class="quote-history-snippet" data-field="quote-history-snippet"></span>
+        <span class="quote-history-meta">
+          <span class="quote-history-repo" data-field="quote-history-repo"></span>
+          <span class="quote-history-number" data-field="quote-history-number"></span>
+          <span class="draft-dot" aria-hidden="true"></span>
+          <span class="quote-history-time" data-field="quote-history-time"></span>
+        </span>
+      </a>
+      <button class="quote-history-remove" type="button" data-action="remove-quote-history" aria-label="Remove from history" title="Remove from history">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+        </svg>
+      </button>
+    </li>
+  </template>
+
   <template id="tpl-annotator">
     <div class="annotator" data-annotator role="dialog" aria-modal="true" aria-label="Annotate screenshot">
       <div class="annotator-backdrop" data-action="annotator-cancel" aria-hidden="true"></div>
