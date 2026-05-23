@@ -316,6 +316,124 @@ function renderTemplate(tmpl, q) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Markdown → HTML preview (minimal, safe, no external deps)
+// Handles: fenced code, ATX headings, blockquotes, lists (- / 1.), hr,
+// inline code, bold/italic, links, autolinks, paragraphs. HTML in source is
+// escaped first so user content never injects markup.
+// ---------------------------------------------------------------------------
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function renderInline(s) {
+  // s is already HTML-escaped. Apply inline tokens.
+  let out = s;
+  // Inline code first to protect against further substitutions inside.
+  const codes = [];
+  out = out.replace(/`([^`\n]+)`/g, (_, c) => {
+    codes.push(c);
+    return `\u0000C${codes.length - 1}\u0000`;
+  });
+  // Links: [text](url) — only allow http(s)/mailto/# urls.
+  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (m, text, href, title) => {
+    const safe = /^(https?:|mailto:|#)/i.test(href) ? href : "#";
+    const t = title ? ` title="${escapeHtml(title)}"` : "";
+    return `<a href="${safe}" target="_blank" rel="noopener noreferrer"${t}>${text}</a>`;
+  });
+  // Autolinks <url>
+  out = out.replace(/&lt;(https?:\/\/[^\s&]+)&gt;/g, (m, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
+  // Bold + italic. Order matters: ***x*** > **x** > *x*.
+  out = out.replace(/\*\*\*([^*\n]+)\*\*\*/g, "<strong><em>$1</em></strong>");
+  out = out.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  // Restore inline code with escape.
+  out = out.replace(/\u0000C(\d+)\u0000/g, (_, i) => `<code>${escapeHtml(codes[Number(i)])}</code>`);
+  return out;
+}
+
+function renderMarkdownPreview(src) {
+  const text = String(src == null ? "" : src);
+  if (!text.trim()) return "";
+  const escaped = escapeHtml(text);
+  const lines = escaped.split(/\r?\n/);
+  const html = [];
+  let i = 0;
+  let inList = false;
+  let listTag = "";
+  let inQuote = false;
+  let para = [];
+  const flushPara = () => {
+    if (para.length === 0) return;
+    html.push(`<p>${renderInline(para.join(" "))}</p>`);
+    para = [];
+  };
+  const closeList = () => { if (inList) { html.push(`</${listTag}>`); inList = false; listTag = ""; } };
+  const closeQuote = () => { if (inQuote) { html.push("</blockquote>"); inQuote = false; } };
+  while (i < lines.length) {
+    const line = lines[i];
+    // Fenced code block.
+    const fence = /^```\s*([\w-]*)\s*$/.exec(line);
+    if (fence) {
+      flushPara(); closeList(); closeQuote();
+      const lang = fence[1] || "";
+      const buf = [];
+      i += 1;
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) { buf.push(lines[i]); i += 1; }
+      i += 1; // consume closing fence (or EOF)
+      const cls = lang ? ` class="lang-${escapeHtml(lang)}"` : "";
+      html.push(`<pre><code${cls}>${buf.join("\n")}</code></pre>`);
+      continue;
+    }
+    // Horizontal rule.
+    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
+      flushPara(); closeList(); closeQuote();
+      html.push("<hr>");
+      i += 1; continue;
+    }
+    // ATX heading.
+    const h = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (h) {
+      flushPara(); closeList(); closeQuote();
+      const lvl = h[1].length;
+      html.push(`<h${lvl}>${renderInline(h[2])}</h${lvl}>`);
+      i += 1; continue;
+    }
+    // Blockquote.
+    const bq = /^&gt;\s?(.*)$/.exec(line);
+    if (bq) {
+      flushPara(); closeList();
+      if (!inQuote) { html.push("<blockquote>"); inQuote = true; }
+      html.push(`<p>${renderInline(bq[1])}</p>`);
+      i += 1; continue;
+    } else if (inQuote && line.trim() === "") {
+      closeQuote(); i += 1; continue;
+    } else if (inQuote) {
+      closeQuote();
+    }
+    // Lists.
+    const ul = /^\s*[-*]\s+(.+)$/.exec(line);
+    const ol = /^\s*\d+\.\s+(.+)$/.exec(line);
+    if (ul || ol) {
+      flushPara();
+      const want = ul ? "ul" : "ol";
+      if (inList && listTag !== want) closeList();
+      if (!inList) { html.push(`<${want}>`); inList = true; listTag = want; }
+      html.push(`<li>${renderInline((ul || ol)[1])}</li>`);
+      i += 1; continue;
+    } else if (inList && line.trim() === "") {
+      closeList(); i += 1; continue;
+    } else if (inList) {
+      closeList();
+    }
+    // Blank line ends paragraph.
+    if (line.trim() === "") { flushPara(); i += 1; continue; }
+    para.push(line.trim());
+    i += 1;
+  }
+  flushPara(); closeList(); closeQuote();
+  return html.join("\n");
+}
+
 function filterRecentRepos(recents, query) {
   const q = String(query || "").trim().toLowerCase();
   if (!q) return recents.slice();
@@ -496,6 +614,7 @@ if (typeof globalThis !== "undefined") {
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeDrafts, MAX_DRAFTS,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
+    renderMarkdownPreview, escapeHtml,
   };
 }
 
@@ -687,7 +806,10 @@ function buildFormNode(q, state) {
   const chipRow = node.querySelector('[data-field="label-chips"]');
   const previewBox = node.querySelector("[data-preview]");
   const previewBody = node.querySelector('[data-field="preview-body"]');
+  const previewRendered = node.querySelector('[data-field="preview-rendered"]');
+  const previewTabs = node.querySelectorAll('[data-action="preview-mode"]');
   const toggleBtn = node.querySelector('[data-action="toggle-preview"]');
+  let previewMode = "rendered";
   const submitBtn = node.querySelector('[data-action="submit"]');
   const saveDraftBtn = node.querySelector('[data-action="save-draft"]');
   const draftStatus = node.querySelector('[data-field="draft-status"]');
@@ -815,6 +937,7 @@ function buildFormNode(q, state) {
   labelsInput.value = state.labels || "";
   renderLabelChips(chipRow, parseLabels(labelsInput.value));
   previewBody.textContent = buildMarkdownBody(q);
+  if (previewRendered) previewRendered.innerHTML = renderMarkdownPreview(buildMarkdownBody(q));
 
   function effectiveBody() {
     return activeTemplate && activeTemplate.body
@@ -823,7 +946,27 @@ function buildFormNode(q, state) {
   }
 
   function refreshPreviewIfOpen() {
-    if (!previewBox.hidden) previewBody.textContent = effectiveBody();
+    if (previewBox.hidden) return;
+    const body = effectiveBody();
+    previewBody.textContent = body;
+    if (previewRendered) previewRendered.innerHTML = renderMarkdownPreview(body);
+  }
+
+  function setPreviewMode(mode) {
+    previewMode = mode === "source" ? "source" : "rendered";
+    if (previewRendered) previewRendered.hidden = previewMode !== "rendered";
+    if (previewBody) previewBody.hidden = previewMode !== "source";
+    for (const t of previewTabs) {
+      t.setAttribute("aria-selected", String(t.dataset.mode === previewMode));
+    }
+  }
+  setPreviewMode(previewMode);
+  for (const t of previewTabs) {
+    t.addEventListener("click", (e) => {
+      e.preventDefault();
+      setPreviewMode(t.dataset.mode);
+      refreshPreviewIfOpen();
+    });
   }
 
   function refreshTemplateStatus() {
@@ -1052,7 +1195,7 @@ function buildFormNode(q, state) {
     const shown = !previewBox.hidden;
     previewBox.hidden = shown;
     toggleBtn.setAttribute("aria-pressed", String(!shown));
-    if (!shown) previewBody.textContent = effectiveBody();
+    if (!shown) refreshPreviewIfOpen();
   });
 
   submitBtn.title = "Create a GitHub issue with the captured quote";

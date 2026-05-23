@@ -164,8 +164,21 @@
       </div>
 
       <div class="preview" data-preview hidden>
-        <span class="context-label">Body preview</span>
-        <pre class="preview-body" data-field="preview-body"></pre>
+        <header class="preview-head">
+          <span class="context-label">Body preview</span>
+          <div class="preview-tabs" role="tablist" aria-label="Preview mode">
+            <button class="preview-tab" type="button" role="tab" data-action="preview-mode" data-mode="rendered" aria-selected="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16"></path><path d="M4 12h10"></path><path d="M4 19h16"></path></svg>
+              <span>Rendered</span>
+            </button>
+            <button class="preview-tab" type="button" role="tab" data-action="preview-mode" data-mode="source" aria-selected="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 7l-5 5 5 5"></path><path d="M15 7l5 5-5 5"></path></svg>
+              <span>Source</span>
+            </button>
+          </div>
+        </header>
+        <div class="preview-rendered markdown" data-field="preview-rendered" aria-live="polite"></div>
+        <pre class="preview-body" data-field="preview-body" hidden></pre>
       </div>
 
       <p class="draft-status" data-field="draft-status" hidden></p>
