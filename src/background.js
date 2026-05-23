@@ -447,6 +447,94 @@ on("removeOfflineItem", async (msg) => {
 
 on("flushOfflineQueue", async () => flushOfflineQueue());
 
+// ---------------------------------------------------------------------------
+// Duplicate detector — search a repo for similar open issues before filing.
+// Uses the GitHub Search API; works unauthenticated (low rate limit) and is
+// transparently boosted when the user's PAT is present.
+// ---------------------------------------------------------------------------
+
+const DUP_STOPWORDS = new Set([
+  "a","an","and","are","as","at","be","but","by","for","from","has","have",
+  "in","into","is","it","its","of","on","or","so","that","the","their",
+  "this","to","was","were","will","with","you","your","i","we","they",
+  "quote","issue","bug","can","could","would","should","if","not","no",
+  "do","does","did","about","there","here","just","like","some","any",
+]);
+
+function __qtiDupTokens(title, selection) {
+  const seen = new Set();
+  const out = [];
+  const src = `${String(title || "")} ${String(selection || "").slice(0, 400)}`;
+  for (const raw of src.toLowerCase().split(/[^a-z0-9_]+/)) {
+    if (!raw || raw.length < 3 || raw.length > 30) continue;
+    if (DUP_STOPWORDS.has(raw)) continue;
+    if (/^\d+$/.test(raw)) continue;
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    out.push(raw);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+function __qtiBuildDupQuery({ repo, title, selectionText, state }) {
+  const tokens = __qtiDupTokens(title, selectionText);
+  if (tokens.length === 0) return "";
+  const quoted = tokens.map((t) => `"${t}"`).join(" ");
+  const stateQ = state === "all" ? "" : ` is:${state === "closed" ? "closed" : "open"}`;
+  return `${quoted} repo:${repo} is:issue${stateQ} in:title,body`;
+}
+
+async function __qtiSearchIssues(qStr) {
+  const url = `${GITHUB_API}/search/issues?q=${encodeURIComponent(qStr)}&per_page=10&sort=updated&order=desc`;
+  const headers = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  const token = await getToken().catch(() => null);
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(url, { headers });
+  if (res.status === 403 || res.status === 429) {
+    const reset = Number(res.headers.get("x-ratelimit-reset")) || 0;
+    const err = new Error("GitHub rate limit reached — try again shortly.");
+    err.status = res.status;
+    err.resetAt = reset ? reset * 1000 : null;
+    throw err;
+  }
+  if (!res.ok) {
+    let data = null;
+    try { data = await res.json(); } catch { /* ignore */ }
+    const detail = data?.message || `${res.status} ${res.statusText}`;
+    const err = new Error(`GitHub: ${detail}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return items.slice(0, 8).map((it) => ({
+    number: it.number,
+    title: String(it.title || "").slice(0, 240),
+    htmlUrl: it.html_url,
+    state: it.state,
+    updatedAt: it.updated_at,
+    comments: typeof it.comments === "number" ? it.comments : 0,
+    labels: Array.isArray(it.labels) ? it.labels.map((l) => String(l?.name || "").trim()).filter(Boolean).slice(0, 6) : [],
+    user: it.user?.login || "",
+  }));
+}
+
+on("searchSimilarIssues", async (msg) => {
+  const repo = String(msg?.repo || "").trim();
+  const title = String(msg?.title || "").trim();
+  const selectionText = String(msg?.selectionText || "");
+  const state = msg?.state === "closed" || msg?.state === "all" ? msg.state : "open";
+  if (!REPO_RE.test(repo)) return { items: [], reason: "invalid-repo", query: "" };
+  const q = __qtiBuildDupQuery({ repo, title, selectionText, state });
+  if (!q) return { items: [], reason: "no-tokens", query: "" };
+  const items = await __qtiSearchIssues(q);
+  return { items, query: q };
+});
+
 // submitIssue — POST a GitHub issue using the stored PAT.
 // payload: { repo: "owner/name", title, body, labels?: string[] }
 on("submitIssue", async (msg) => {

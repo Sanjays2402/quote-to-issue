@@ -27,6 +27,50 @@ const STORAGE_KEYS = Object.freeze({
 
 const MAX_RECENT_ISSUES = 10;
 
+const DUP_STOPWORDS = new Set([
+  "a","an","and","are","as","at","be","but","by","for","from","has","have",
+  "in","into","is","it","its","of","on","or","so","that","the","their",
+  "this","to","was","were","will","with","you","your","i","we","they",
+  "quote","issue","bug","can","could","would","should","if","not","no",
+  "do","does","did","about","there","here","just","like","some","any",
+]);
+
+function extractDupTokens(title, selection) {
+  const seen = new Set();
+  const out = [];
+  const src = `${String(title || "")} ${String(selection || "").slice(0, 400)}`;
+  for (const raw of src.toLowerCase().split(/[^a-z0-9_]+/)) {
+    if (!raw || raw.length < 3 || raw.length > 30) continue;
+    if (DUP_STOPWORDS.has(raw)) continue;
+    if (/^\d+$/.test(raw)) continue;
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    out.push(raw);
+    if (out.length >= 6) break;
+  }
+  return out;
+}
+
+function scoreDuplicateMatch(item, tokens) {
+  if (!item || !tokens || tokens.length === 0) return 0;
+  const hay = `${String(item.title || "").toLowerCase()}`;
+  let hits = 0;
+  for (const t of tokens) if (hay.includes(t)) hits++;
+  return tokens.length ? hits / tokens.length : 0;
+}
+
+function rankDuplicates(items, tokens) {
+  if (!Array.isArray(items)) return [];
+  const ranked = items.map((it) => ({ ...it, _score: scoreDuplicateMatch(it, tokens) }));
+  ranked.sort((a, b) => {
+    if (b._score !== a._score) return b._score - a._score;
+    const at = Date.parse(a.updatedAt || "") || 0;
+    const bt = Date.parse(b.updatedAt || "") || 0;
+    return bt - at;
+  });
+  return ranked;
+}
+
 // ---------------------------------------------------------------------------
 // Capture settings — toggle + radius for surrounding-context scraping
 // ---------------------------------------------------------------------------
@@ -1068,6 +1112,7 @@ if (typeof globalThis !== "undefined") {
     normalizeBulkQuotes, MAX_BULK_QUOTES,
     normalizeRecentIssues, MAX_RECENT_ISSUES,
     normalizeOfflineQueue, MAX_OFFLINE_QUEUE, isRetryableErrorMessage,
+    extractDupTokens, scoreDuplicateMatch, rankDuplicates,
     renderMarkdownPreview, escapeHtml,
     normalizeCaptureSettings, DEFAULT_CAPTURE_SETTINGS,
     CONTEXT_RADIUS_MIN, CONTEXT_RADIUS_MAX,
@@ -1878,6 +1923,150 @@ function buildFormNode(q, state) {
   };
   repoInput.addEventListener("input", refreshSubmitState);
   titleInput.addEventListener("input", refreshSubmitState);
+
+  // -------------------------------------------------------------------------
+  // Duplicate detector
+  // -------------------------------------------------------------------------
+  const dupField = node.querySelector("[data-dup-field]");
+  const dupStatus = node.querySelector('[data-field="dup-status"]');
+  const dupList = node.querySelector("[data-dup-list]");
+  const dupCount = node.querySelector('[data-field="dup-count"]');
+  const dupRefreshBtn = node.querySelector('[data-action="refresh-dups"]');
+  let dupSeq = 0;
+  let dupDebounce = null;
+  let dupLastKey = "";
+
+  function setDupStatus(text, state) {
+    if (!dupStatus) return;
+    dupStatus.textContent = text;
+    dupStatus.setAttribute("data-state", state || "idle");
+  }
+  function setDupCount(n) {
+    if (!dupCount) return;
+    if (n > 0) { dupCount.textContent = String(n); dupCount.hidden = false; }
+    else { dupCount.textContent = ""; dupCount.hidden = true; }
+  }
+  function showDupField(show) {
+    if (!dupField) return;
+    dupField.hidden = !show;
+  }
+  function renderDupList(items, tokens) {
+    if (!dupList) return;
+    dupList.replaceChildren();
+    if (!items || items.length === 0) {
+      dupList.hidden = true;
+      return;
+    }
+    dupList.hidden = false;
+    const ranked = rankDuplicates(items, tokens);
+    for (const it of ranked.slice(0, 8)) {
+      const li = document.createElement("li");
+      li.className = "dup-row";
+      const top = document.createElement("div");
+      top.className = "dup-row-top";
+      const stateEl = document.createElement("span");
+      stateEl.className = "dup-row-state";
+      stateEl.setAttribute("data-state", it.state || "open");
+      stateEl.title = it.state === "closed" ? "closed" : "open";
+      stateEl.innerHTML = it.state === "closed"
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 12l4 4 8-8"></path></svg>'
+        : '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="12" cy="12" r="5"></circle></svg>';
+      const a = document.createElement("a");
+      a.className = "dup-row-link";
+      a.href = it.htmlUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.textContent = it.title || `Issue #${it.number}`;
+      const num = document.createElement("span");
+      num.className = "dup-row-num";
+      num.textContent = `#${it.number}`;
+      top.append(stateEl, a, num);
+      const meta = document.createElement("div");
+      meta.className = "dup-row-meta";
+      const pieces = [];
+      if (it.updatedAt) pieces.push(fmtRelative(it.updatedAt));
+      if (typeof it.comments === "number" && it.comments > 0) pieces.push(`${it.comments} 💬`.replace("💬", "comments"));
+      if (it.user) pieces.push(`@${it.user}`);
+      meta.textContent = pieces.join(" · ");
+      if (Array.isArray(it.labels) && it.labels.length) {
+        const labs = document.createElement("span");
+        labs.className = "dup-row-labels";
+        for (const l of it.labels.slice(0, 4)) {
+          const tag = document.createElement("span");
+          tag.className = "dup-row-label";
+          tag.textContent = l;
+          labs.appendChild(tag);
+        }
+        meta.appendChild(labs);
+      }
+      li.append(top, meta);
+      dupList.appendChild(li);
+    }
+  }
+
+  async function runDupSearch({ force = false } = {}) {
+    if (!dupField) return;
+    const repo = parseRepo(repoInput.value);
+    const title = titleInput.value.trim();
+    if (!repo.ok || title.length < 4) {
+      showDupField(false);
+      setDupCount(0);
+      dupLastKey = "";
+      return;
+    }
+    const selection = (q?.selectionText || "").slice(0, 400);
+    const key = `${repo.value}::${title.toLowerCase()}`;
+    if (!force && key === dupLastKey) return;
+    dupLastKey = key;
+    showDupField(true);
+    const tokens = extractDupTokens(title, selection);
+    if (tokens.length === 0) {
+      setDupStatus("Title needs a few descriptive words to search.", "idle");
+      if (dupList) { dupList.hidden = true; dupList.replaceChildren(); }
+      setDupCount(0);
+      return;
+    }
+    const mySeq = ++dupSeq;
+    dupRefreshBtn?.classList.add("loading");
+    setDupStatus("Scanning for similar open issues…", "idle");
+    try {
+      const reply = await chrome.runtime.sendMessage({
+        type: "searchSimilarIssues",
+        repo: repo.value,
+        title,
+        selectionText: selection,
+        state: "open",
+      });
+      if (mySeq !== dupSeq) return;
+      if (!reply?.ok) throw new Error(reply?.error || "Search failed");
+      const items = Array.isArray(reply.result?.items) ? reply.result.items : [];
+      renderDupList(items, tokens);
+      setDupCount(items.length);
+      if (items.length === 0) {
+        setDupStatus("No similar open issues found.", "ok");
+      } else {
+        const label = items.length === 1 ? "1 similar issue" : `${items.length} similar issues`;
+        setDupStatus(`${label} — review before filing to avoid duplicates.`, "warn");
+      }
+    } catch (err) {
+      if (mySeq !== dupSeq) return;
+      if (dupList) { dupList.hidden = true; dupList.replaceChildren(); }
+      setDupCount(0);
+      setDupStatus(String(err?.message || err), "err");
+    } finally {
+      if (mySeq === dupSeq) dupRefreshBtn?.classList.remove("loading");
+    }
+  }
+
+  function scheduleDupSearch() {
+    if (dupDebounce) clearTimeout(dupDebounce);
+    dupDebounce = setTimeout(() => runDupSearch().catch(() => {}), 550);
+  }
+  repoInput.addEventListener("input", scheduleDupSearch);
+  titleInput.addEventListener("input", scheduleDupSearch);
+  dupRefreshBtn?.addEventListener("click", () => runDupSearch({ force: true }).catch(() => {}));
+  // Initial search if the form already has enough info (e.g. loaded draft).
+  setTimeout(() => runDupSearch().catch(() => {}), 250);
 
   // Kick off the recents fetch — reveals the toggle and primes the dropdown.
   refreshRecents();

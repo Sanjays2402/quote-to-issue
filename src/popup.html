@@ -192,6 +192,27 @@
         </div>
       </div>
 
+      <div class="field dup-field" data-dup-field hidden>
+        <div class="dup-head">
+          <div class="dup-head-title">
+            <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="M20 20l-3.5-3.5"></path>
+            </svg>
+            <span>Similar issues</span>
+            <span class="dup-count" data-field="dup-count" hidden></span>
+          </div>
+          <button class="icon-btn ghost dup-refresh" type="button" data-action="refresh-dups" title="Search for similar issues" aria-label="Refresh similar issues">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 0-2.34 5.66"></path>
+              <path d="M20 5v6h-6"></path>
+            </svg>
+          </button>
+        </div>
+        <p class="dup-status" data-field="dup-status" data-state="idle">Type a title to scan for duplicates.</p>
+        <ul class="dup-list" data-dup-list role="list" hidden></ul>
+      </div>
+
       <div class="preview" data-preview hidden>
         <header class="preview-head">
           <span class="context-label">Body preview</span>

@@ -708,3 +708,67 @@ if (!isRetryableErrorMessage("Network timeout")) { console.error("isRetryable ti
 if (isRetryableErrorMessage("Validation failed")) { console.error("isRetryable should reject validation"); process.exit(1); }
 if (isRetryableErrorMessage("401 unauthorized")) { console.error("isRetryable should reject 401"); process.exit(1); }
 console.log("\u2713 offline-queue smoke ok");
+
+// --- Duplicate-issue detector -------------------------------------------
+const { extractDupTokens, scoreDuplicateMatch, rankDuplicates } = globalThis.__qti;
+if (typeof extractDupTokens !== "function") { console.error("extractDupTokens missing"); process.exit(1); }
+if (typeof scoreDuplicateMatch !== "function") { console.error("scoreDuplicateMatch missing"); process.exit(1); }
+if (typeof rankDuplicates !== "function") { console.error("rankDuplicates missing"); process.exit(1); }
+const dupToks = extractDupTokens("Crash when opening settings panel on dark mode", "");
+if (!dupToks.includes("crash") || !dupToks.includes("settings")) { console.error("extractDupTokens basic:", dupToks); process.exit(1); }
+if (dupToks.includes("the") || dupToks.includes("on")) { console.error("extractDupTokens stopwords leaked:", dupToks); process.exit(1); }
+if (dupToks.length > 6) { console.error("extractDupTokens cap wrong"); process.exit(1); }
+if (extractDupTokens("", "").length !== 0) { console.error("extractDupTokens empty"); process.exit(1); }
+if (extractDupTokens("the and to of", "").length !== 0) { console.error("extractDupTokens all-stopwords"); process.exit(1); }
+// Dedupe
+const dupToks2 = extractDupTokens("crash crash CRASH bug bug", "");
+if (dupToks2.filter((t) => t === "crash").length !== 1) { console.error("extractDupTokens dedupe:", dupToks2); process.exit(1); }
+// Numbers / short tokens filtered
+const dupToks3 = extractDupTokens("a 12345 fix login bug", "");
+if (dupToks3.includes("12345") || dupToks3.includes("a")) { console.error("extractDupTokens numerics:", dupToks3); process.exit(1); }
+// Score + rank
+const items = [
+  { number: 1, title: "Settings panel crashes on launch", updatedAt: "2026-05-10T00:00:00Z", state: "open" },
+  { number: 2, title: "Unrelated typo in README", updatedAt: "2026-05-22T00:00:00Z", state: "open" },
+  { number: 3, title: "Crash in settings + dark mode", updatedAt: "2026-05-20T00:00:00Z", state: "open" },
+];
+const toks = extractDupTokens("Settings crash dark", "");
+const ranked = rankDuplicates(items, toks);
+if (ranked[0].number !== 3) { console.error("rankDuplicates top wrong:", ranked.map((r) => [r.number, r._score])); process.exit(1); }
+if (ranked[ranked.length - 1].number !== 2) { console.error("rankDuplicates bottom wrong:", ranked); process.exit(1); }
+// Score returns 0 with no tokens
+if (scoreDuplicateMatch({ title: "x" }, []) !== 0) { console.error("scoreDuplicateMatch empty tokens"); process.exit(1); }
+// Background scaffolding tokens
+const swDup = fs.readFileSync("src/background.js", "utf8");
+for (const needle of [
+  "searchSimilarIssues",
+  "/search/issues",
+  "__qtiBuildDupQuery",
+  "__qtiSearchIssues",
+  "__qtiDupTokens",
+  "is:issue",
+  "DUP_STOPWORDS",
+  "x-ratelimit-reset",
+]) {
+  if (!swDup.includes(needle)) { console.error("background.js missing dup-detector token:", needle); process.exit(1); }
+}
+// Popup scaffolding
+const popupHtmlDup = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of [
+  "data-dup-field",
+  'data-action="refresh-dups"',
+  'data-field="dup-status"',
+  'data-field="dup-count"',
+  "data-dup-list",
+]) {
+  if (!popupHtmlDup.includes(needle)) { console.error("popup.html missing dup-detector token:", needle); process.exit(1); }
+}
+const popupCssDup = fs.readFileSync("src/popup.css", "utf8");
+for (const needle of [".dup-field", ".dup-head", ".dup-list", ".dup-row", ".dup-row-link", ".dup-row-state", ".dup-row-meta", ".dup-row-label", ".dup-refresh"]) {
+  if (!popupCssDup.includes(needle)) { console.error("popup.css missing dup-detector token:", needle); process.exit(1); }
+}
+const popupJsDup = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["extractDupTokens", "rankDuplicates", "scoreDuplicateMatch", "searchSimilarIssues", "runDupSearch", "scheduleDupSearch", "DUP_STOPWORDS"]) {
+  if (!popupJsDup.includes(needle)) { console.error("popup.js missing dup-detector token:", needle); process.exit(1); }
+}
+console.log("\u2713 dup-detector smoke ok");
