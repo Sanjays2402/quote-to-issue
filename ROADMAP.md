@@ -16,4 +16,4 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Liquid-glass popup UI
 - [x] Dark/light theme
 - [x] Markdown preview pane
-- [ ] Auto-link source URL with line/paragraph anchor
+- [x] Auto-link source URL with line/paragraph anchor

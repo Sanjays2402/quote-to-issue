@@ -160,7 +160,7 @@ const body = buildMarkdownBody({
   pageTitle: "Doc", pageUrl: "https://example.com/page",
   nearestHeading: "Intro", capturedAt: "2026-05-23T10:00:00Z",
 });
-for (const needle of ["> line one", "> line two", "**Source:** [Doc](https://example.com/page)", "**Section:** Intro", "**Captured:**"]) {
+for (const needle of ["> line one", "> line two", "**Source:** [Doc](https://example.com/page", "**Section:** Intro", "**Captured:**"]) {
   if (!body.includes(needle)) { console.error("buildMarkdownBody missing:", needle); process.exit(1); }
 }
 
@@ -227,6 +227,34 @@ const bodyShot = buildMarkdownBody({
 if (!bodyShot.includes("**Screenshot:**") || !bodyShot.includes("1280\u00d7720")) { console.error("buildMarkdownBody screenshot line missing"); process.exit(1); }
 
 console.log("\u2713 smoke ok");
+
+// --- Source URL anchor (Scroll-To-Text-Fragment) --------------------------
+const { buildSourceUrlWithAnchor } = globalThis.__qti;
+if (typeof buildSourceUrlWithAnchor !== "function") { console.error("buildSourceUrlWithAnchor missing"); process.exit(1); }
+if (buildSourceUrlWithAnchor({ pageUrl: "", selectionText: "x" }) !== "") { console.error("anchor: empty url should return ''"); process.exit(1); }
+if (buildSourceUrlWithAnchor({ pageUrl: "https://e.com/p", selectionText: "" }) !== "https://e.com/p") { console.error("anchor: empty selection should pass url through"); process.exit(1); }
+const shortAnchor = buildSourceUrlWithAnchor({ pageUrl: "https://e.com/p", selectionText: "hello world" });
+if (shortAnchor !== "https://e.com/p#:~:text=hello%20world") { console.error("anchor short wrong:", shortAnchor); process.exit(1); }
+const preserved = buildSourceUrlWithAnchor({ pageUrl: "https://e.com/p#existing", selectionText: "hello" });
+if (preserved !== "https://e.com/p#existing") { console.error("anchor: should not clobber existing fragment"); process.exit(1); }
+const encoded = buildSourceUrlWithAnchor({ pageUrl: "https://e.com/p", selectionText: "a, b - c & d" });
+if (!encoded.includes("%2C") || !encoded.includes("%2D") || !encoded.includes("%26")) { console.error("anchor: reserved chars not encoded:", encoded); process.exit(1); }
+const longText = Array.from({ length: 60 }, (_, i) => `word${i}`).join(" ");
+const longAnchor = buildSourceUrlWithAnchor({ pageUrl: "https://e.com/p", selectionText: longText });
+if (!longAnchor.includes("#:~:text=") || !longAnchor.includes(",")) { console.error("anchor long should be start,end:", longAnchor); process.exit(1); }
+if (!longAnchor.includes("word0") || !longAnchor.includes("word59")) { console.error("anchor long should include first+last words:", longAnchor); process.exit(1); }
+// Body should embed the anchored link.
+const bodyAnchored = buildMarkdownBody({
+  selectionText: "the quick brown fox",
+  pageTitle: "Doc", pageUrl: "https://example.com/page",
+  capturedAt: "2026-05-23T10:00:00Z",
+});
+if (!bodyAnchored.includes("#:~:text=the%20quick%20brown%20fox")) { console.error("body should contain anchored URL"); process.exit(1); }
+if (!bodyAnchored.includes("Plain URL:")) { console.error("body should include plain URL footer when anchored"); process.exit(1); }
+// Template placeholder.
+const renderedAnchor = renderTemplate("link: {{source_url_anchor}}", { selectionText: "hi there", pageUrl: "https://e.com/p" });
+if (!renderedAnchor.includes("#:~:text=hi%20there")) { console.error("renderTemplate source_url_anchor:", renderedAnchor); process.exit(1); }
+console.log("\u2713 anchor smoke ok");
 
 // --- Drafts ----------------------------------------------------------------
 const { normalizeDrafts, MAX_DRAFTS } = globalThis.__qti;

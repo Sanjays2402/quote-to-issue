@@ -26,7 +26,7 @@ const MAX_DRAFTS = 25;
 const MAX_DRAFT_BODY_LEN = 32_000;
 
 const MAX_TEMPLATE_LEN = 8000;
-const DEFAULT_TEMPLATE = `## Summary\n\n\n## Quote\n\n{{quote_blockquote}}\n\n## Source\n\n- **Page:** [{{source_title}}]({{source_url}})\n- **Section:** {{section}}\n- **Captured:** {{captured}}\n\n{{screenshot_note}}\n`;
+const DEFAULT_TEMPLATE = `## Summary\n\n\n## Quote\n\n{{quote_blockquote}}\n\n## Source\n\n- **Page:** [{{source_title}}]({{source_url_anchor}})\n- **Section:** {{section}}\n- **Captured:** {{captured}}\n\n{{screenshot_note}}\n`;
 
 const MAX_RECENT_REPOS = 8;
 
@@ -148,6 +148,47 @@ function deriveTitle(q) {
   return `Quote: ${trimmed}`;
 }
 
+/**
+ * Build a Scroll-To-Text-Fragment deep link for the captured quote. Modern
+ * browsers honour `#:~:text=...` and will scroll + highlight the exact
+ * passage on load — the issue link goes from "open the page" to "open the
+ * page exactly where I selected this". Long selections collapse to a
+ * `start,end` anchor pair so the URL stays a reasonable length.
+ *
+ * Returns the original URL untouched if it already has a fragment, or if
+ * there is no selection to anchor to. URLs without a `pageUrl` return "".
+ */
+function buildSourceUrlWithAnchor(q) {
+  const url = String(q?.pageUrl || "").trim();
+  if (!url) return "";
+  const text = String(q?.selectionText || "").replace(/\s+/g, " ").trim();
+  if (!text) return url;
+  // Don't clobber an existing fragment — the source page already pointed at
+  // a specific anchor and we shouldn't second-guess that.
+  if (url.includes("#")) return url;
+  // RFC 3986 reserves these, but the text-fragment grammar additionally
+  // requires `-`, `,`, `&` to be percent-encoded so they don't collide with
+  // the prefix/suffix/end syntax.
+  const enc = (s) => encodeURIComponent(s)
+    .replace(/-/g, "%2D")
+    .replace(/,/g, "%2C")
+    .replace(/&/g, "%26");
+  const MAX = 300;
+  if (text.length <= MAX) {
+    return `${url}#:~:text=${enc(text)}`;
+  }
+  // For long selections, use the textStart,textEnd form. Take enough words
+  // on each side that the browser can disambiguate, but not so many that the
+  // URL becomes unwieldy.
+  const words = text.split(" ").filter(Boolean);
+  const startWords = words.slice(0, 6).join(" ");
+  const endWords = words.slice(-6).join(" ");
+  if (!startWords || !endWords || startWords === endWords) {
+    return `${url}#:~:text=${enc(text.slice(0, MAX))}`;
+  }
+  return `${url}#:~:text=${enc(startWords)},${enc(endWords)}`;
+}
+
 function buildMarkdownBody(q) {
   if (!q) return "";
   const lines = [];
@@ -165,7 +206,11 @@ function buildMarkdownBody(q) {
   lines.push("---");
   if (q.pageTitle || q.pageUrl) {
     const title = q.pageTitle ? q.pageTitle.replace(/[\[\]]/g, "") : (hostnameOf(q.pageUrl) || q.pageUrl);
-    lines.push(`**Source:** [${title}](${q.pageUrl || "#"})`);
+    const anchored = buildSourceUrlWithAnchor(q) || q.pageUrl || "#";
+    lines.push(`**Source:** [${title}](${anchored})`);
+    if (anchored && anchored !== (q.pageUrl || "") && q.pageUrl) {
+      lines.push(`<sub>Plain URL: <${q.pageUrl}></sub>`);
+    }
   }
   if (q.nearestHeading) lines.push(`**Section:** ${q.nearestHeading}`);
   if (q.screenshot && q.screenshot.dataUrl) {
@@ -289,6 +334,7 @@ function renderTemplate(tmpl, q) {
   const quoteBlock = quoted ? quoted.split(/\r?\n/).map((ln) => "> " + ln).join("\n") : "";
   const sourceTitle = q?.pageTitle || hostnameOf(q?.pageUrl) || q?.pageUrl || "";
   const sourceUrl = q?.pageUrl || "";
+  const sourceUrlAnchor = buildSourceUrlWithAnchor(q);
   const section = q?.nearestHeading || "";
   const captured = q?.capturedAt || "";
   const ctxBefore = (q?.contextBefore || "").trim();
@@ -303,6 +349,7 @@ function renderTemplate(tmpl, q) {
     quote_blockquote: quoteBlock,
     source_title: sourceTitle,
     source_url: sourceUrl,
+    source_url_anchor: sourceUrlAnchor,
     section,
     captured,
     context_before: ctxBefore,
@@ -609,7 +656,7 @@ async function dataUrlToBlob(dataUrl) {
 // expose for tests
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
-    parseRepo, parseLabels, deriveTitle, buildMarkdownBody, deriveScreenshotFilename,
+    parseRepo, parseLabels, deriveTitle, buildMarkdownBody, buildSourceUrlWithAnchor, deriveScreenshotFilename,
     formatBytes, normalizeRecentRepos, filterRecentRepos,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeDrafts, MAX_DRAFTS,
@@ -702,8 +749,11 @@ function renderQuoteCard(q) {
 
   const link = node.querySelector('[data-field="pageLink"]');
   if (link) {
-    link.href = q.pageUrl || "#";
+    // Prefer the Scroll-To-Text-Fragment anchor so clicking the source link
+    // jumps the user back to the exact passage they captured.
+    link.href = buildSourceUrlWithAnchor(q) || q.pageUrl || "#";
     link.textContent = q.pageTitle || hostnameOf(q.pageUrl) || q.pageUrl || "(unknown source)";
+    link.title = q.pageUrl || "";
   }
 
   if (q.nearestHeading) {
