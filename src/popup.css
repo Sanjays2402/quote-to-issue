@@ -952,6 +952,15 @@ body[data-theme="light"] .template-body { background: rgba(0, 0, 0, 0.04); }
   justify-content: space-between;
   gap: 8px;
 }
+.capture-head-row {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+.settings-blurb-sub {
+  margin-top: -2px;
+  opacity: 0.85;
+}
 .capture-range {
   display: flex;
   flex-direction: column;

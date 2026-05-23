@@ -385,6 +385,7 @@ const { normalizeCaptureSettings, DEFAULT_CAPTURE_SETTINGS, CONTEXT_RADIUS_MAX }
 if (typeof normalizeCaptureSettings !== "function") { console.error("normalizeCaptureSettings missing"); process.exit(1); }
 if (!DEFAULT_CAPTURE_SETTINGS || DEFAULT_CAPTURE_SETTINGS.contextEnabled !== true) { console.error("DEFAULT_CAPTURE_SETTINGS invalid"); process.exit(1); }
 if (DEFAULT_CAPTURE_SETTINGS.contextRadius !== 240) { console.error("DEFAULT_CAPTURE_SETTINGS radius wrong"); process.exit(1); }
+if (DEFAULT_CAPTURE_SETTINGS.highlightMode !== false) { console.error("DEFAULT_CAPTURE_SETTINGS highlightMode must default to false"); process.exit(1); }
 const capDef = normalizeCaptureSettings(undefined);
 if (capDef.contextEnabled !== true || capDef.contextRadius !== 240) { console.error("normalizeCaptureSettings undefined wrong"); process.exit(1); }
 const capOff = normalizeCaptureSettings({ contextEnabled: false, contextRadius: 400 });
@@ -395,7 +396,40 @@ const capNeg = normalizeCaptureSettings({ contextEnabled: true, contextRadius: -
 if (capNeg.contextRadius !== 0) { console.error("radius negative clamp wrong"); process.exit(1); }
 const capStr = normalizeCaptureSettings({ contextEnabled: true, contextRadius: "180" });
 if (capStr.contextRadius !== 180) { console.error("radius string coerce wrong"); process.exit(1); }
+// Highlight mode normalization.
+if (normalizeCaptureSettings({ highlightMode: true }).highlightMode !== true) { console.error("highlightMode true round-trip"); process.exit(1); }
+if (normalizeCaptureSettings({ highlightMode: "yes" }).highlightMode !== false) { console.error("highlightMode non-bool should default false"); process.exit(1); }
+if (normalizeCaptureSettings(undefined).highlightMode !== false) { console.error("highlightMode default false"); process.exit(1); }
 console.log("\u2713 capture settings smoke ok");
+
+// --- Highlighted-selection screenshot mode -------------------------------
+const swHl = fs.readFileSync("src/background.js", "utf8");
+for (const needle of [
+  "applySpotlightHighlight",
+  "__qtiMaybeSpotlight",
+  "selectionRects",
+  "highlighted: true",
+  "OffscreenCanvas",
+  "highlightMode",
+  "roundedRectPath",
+]) {
+  if (!swHl.includes(needle)) { console.error("background.js missing highlight-mode token:", needle); process.exit(1); }
+}
+const popupHtmlHl = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of [
+  'data-action="toggle-highlight"',
+  'data-field="highlight-toggle-label"',
+  'data-highlight-row',
+  'data-field="highlight-knob"',
+  'Spotlight selection',
+]) {
+  if (!popupHtmlHl.includes(needle)) { console.error("popup.html missing highlight token:", needle); process.exit(1); }
+}
+const popupJsHl = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["highlightMode", "toggle-highlight", "highlightToggleBtn"]) {
+  if (!popupJsHl.includes(needle)) { console.error("popup.js missing highlight token:", needle); process.exit(1); }
+}
+console.log("\u2713 highlight-mode smoke ok");
 
 // --- Byline + publish date scraping --------------------------------------
 const { formatPublishDate } = globalThis.__qti;

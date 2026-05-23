@@ -77,7 +77,7 @@ function rankDuplicates(items, tokens) {
 // ---------------------------------------------------------------------------
 const CONTEXT_RADIUS_MIN = 0;
 const CONTEXT_RADIUS_MAX = 600;
-const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240 });
+const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false });
 
 function normalizeCaptureSettings(raw) {
   const out = { ...DEFAULT_CAPTURE_SETTINGS };
@@ -88,6 +88,7 @@ function normalizeCaptureSettings(raw) {
     out.contextRadius = Math.max(CONTEXT_RADIUS_MIN, Math.min(CONTEXT_RADIUS_MAX, Math.round(r)));
   }
   if (!out.contextEnabled) out.contextRadius = 0;
+  if (typeof raw.highlightMode === "boolean") out.highlightMode = raw.highlightMode;
   return out;
 }
 
@@ -2505,6 +2506,8 @@ async function renderSettings() {
   const contextRangeBox = node.querySelector('[data-context-range]');
   const contextRangeInput = node.querySelector('[data-field="context-radius"]');
   const contextRangeValue = node.querySelector('[data-field="context-radius-value"]');
+  const highlightToggleBtn = node.querySelector('[data-action="toggle-highlight"]');
+  const highlightToggleLabel = node.querySelector('[data-field="highlight-toggle-label"]');
 
   async function refreshStatus() {
     const info = await getTokenInfo().catch(() => null);
@@ -2614,6 +2617,22 @@ async function renderSettings() {
     contextRangeInput.addEventListener("change", async () => {
       const next = await setCaptureSettings({ contextRadius: Number(contextRangeInput.value) || 0, contextEnabled: contextToggleBtn.getAttribute("aria-pressed") === "true" });
       applyUi(next);
+    });
+  }
+
+  // Highlight-mode wiring — when on, the service worker spotlights the
+  // selection rectangles after captureVisibleTab so the screenshot frames
+  // exactly what was quoted, with the rest of the page dimmed.
+  if (highlightToggleBtn) {
+    const cur = await getCaptureSettings();
+    const applyHl = (on) => {
+      highlightToggleBtn.setAttribute("aria-pressed", String(!!on));
+      if (highlightToggleLabel) highlightToggleLabel.textContent = on ? "On" : "Off";
+    };
+    applyHl(!!cur.highlightMode);
+    highlightToggleBtn.addEventListener("click", async () => {
+      const next = await setCaptureSettings({ highlightMode: highlightToggleBtn.getAttribute("aria-pressed") !== "true" });
+      applyHl(next.highlightMode);
     });
   }
 

@@ -805,10 +805,41 @@ function __qtiCaptureSelection(opts) {
       if (nearestHeading) break;
       cur = cur.parentNode;
     }
-    return { selectionText, selectionHtml, contextBefore, contextAfter, nearestHeading, isCode, codeLanguage, author: byline.author, publishedAt: byline.publishedAt };
+    // Bounding rects of the selection (CSS pixel coords, viewport-relative).
+    // Used by the SW to composite a spotlight mask on the screenshot.
+    const selectionRects = (() => {
+      try {
+        const list = range.getClientRects ? range.getClientRects() : [];
+        const out = [];
+        for (const r of list) {
+          if (!r || r.width < 1 || r.height < 1) continue;
+          out.push({ x: r.left, y: r.top, w: r.width, h: r.height });
+          if (out.length >= 64) break;
+        }
+        return out;
+      } catch { return []; }
+    })();
+    return { selectionText, selectionHtml, contextBefore, contextAfter, nearestHeading, isCode, codeLanguage, author: byline.author, publishedAt: byline.publishedAt, selectionRects, devicePixelRatio: Number(window.devicePixelRatio) || 1, viewportWidth: window.innerWidth || 0, viewportHeight: window.innerHeight || 0 };
   } catch (err) {
-    return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "", isCode: false, codeLanguage: "", author: byline.author || "", publishedAt: byline.publishedAt || "", error: String(err && err.message || err) };
+    return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "", isCode: false, codeLanguage: "", author: byline.author || "", publishedAt: byline.publishedAt || "", selectionRects: [], devicePixelRatio: 1, error: String(err && err.message || err) };
   }
+}
+
+// Pull the (possibly multi-line) bounding rectangles of the current selection
+// so the service worker can composite a spotlight mask over the screenshot.
+// Coordinates are CSS pixels relative to the viewport — the SW multiplies by
+// devicePixelRatio to align with the captureVisibleTab bitmap.
+function __qtiCollectSelectionRects(range) {
+  try {
+    const list = range.getClientRects ? range.getClientRects() : [];
+    const out = [];
+    for (const r of list) {
+      if (!r || r.width < 1 || r.height < 1) continue;
+      out.push({ x: r.left, y: r.top, w: r.width, h: r.height });
+      if (out.length >= 64) break;
+    }
+    return out;
+  } catch { return []; }
 }
 
 async function captureSelectionFromTab(tabId, frameId) {
@@ -834,6 +865,109 @@ async function captureSelectionFromTab(tabId, frameId) {
     console.warn(LOG_PREFIX, "executeScript failed", err);
     return null;
   }
+}
+
+// Compose a "spotlight" PNG over the raw captureVisibleTab bitmap: dim the
+// rest of the page and frame each selection rect with a crisp accent stroke.
+// Returns a new screenshot record or the input shot on failure.
+async function applySpotlightHighlight(shot, rects, dpr) {
+  if (!shot?.dataUrl || !Array.isArray(rects) || rects.length === 0) return shot;
+  if (typeof OffscreenCanvas !== "function" || typeof createImageBitmap !== "function") return shot;
+  try {
+    const blob = await (await fetch(shot.dataUrl)).blob();
+    const bmp = await createImageBitmap(blob);
+    const W = bmp.width, H = bmp.height;
+    const canvas = new OffscreenCanvas(W, H);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { bmp.close?.(); return shot; }
+    ctx.drawImage(bmp, 0, 0);
+    bmp.close?.();
+    const scale = Number(dpr) > 0 ? Number(dpr) : 1;
+    const pad = Math.max(4, Math.round(6 * scale));
+    const boxes = [];
+    for (const r of rects) {
+      const x = Math.max(0, Math.round(r.x * scale) - pad);
+      const y = Math.max(0, Math.round(r.y * scale) - pad);
+      const w = Math.min(W - x, Math.round(r.w * scale) + pad * 2);
+      const h = Math.min(H - y, Math.round(r.h * scale) + pad * 2);
+      if (w > 0 && h > 0) boxes.push({ x, y, w, h });
+    }
+    if (boxes.length === 0) return shot;
+    // Dim the entire frame, then punch out the selection rects with a
+    // rounded clear so the underlying pixels stay sharp.
+    ctx.save();
+    ctx.fillStyle = "rgba(8, 8, 11, 0.62)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalCompositeOperation = "destination-out";
+    const radius = Math.max(2, Math.round(3 * scale));
+    ctx.beginPath();
+    for (const b of boxes) roundedRectPath(ctx, b.x, b.y, b.w, b.h, radius);
+    ctx.fill();
+    ctx.restore();
+    // Crisp accent stroke around each spotlighted region.
+    ctx.save();
+    ctx.lineWidth = Math.max(2, Math.round(2 * scale));
+    ctx.strokeStyle = "rgba(124, 92, 255, 0.95)";
+    ctx.shadowColor = "rgba(124, 92, 255, 0.55)";
+    ctx.shadowBlur = Math.max(6, Math.round(8 * scale));
+    for (const b of boxes) {
+      ctx.beginPath();
+      roundedRectPath(ctx, b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, radius);
+      ctx.stroke();
+    }
+    ctx.restore();
+    const outBlob = await canvas.convertToBlob({ type: "image/png" });
+    const buf = await outBlob.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let bin = "";
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    const b64 = (globalThis.btoa || ((s) => Buffer.from(s, "binary").toString("base64")))(bin);
+    return {
+      ...shot,
+      dataUrl: `data:image/png;base64,${b64}`,
+      bytes: buf.byteLength,
+      highlighted: true,
+      highlightedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    console.warn(LOG_PREFIX, "applySpotlightHighlight failed", err);
+    return shot;
+  }
+}
+
+// Apply spotlight to a freshly-captured screenshot if the user has the
+// highlight mode toggle on. Reads capture settings + selection rects from the
+// content-script result; returns the original shot unchanged when off or when
+// rects are unavailable (e.g. PDF viewer, cross-origin iframe).
+async function __qtiMaybeSpotlight(shot, enriched) {
+  if (!shot) return shot;
+  let on = false;
+  try {
+    const out = await chrome.storage.local.get(STORAGE_KEYS.captureSettings);
+    const s = out[STORAGE_KEYS.captureSettings];
+    on = !!(s && typeof s === "object" && s.highlightMode === true);
+  } catch { /* default off */ }
+  if (!on) return shot;
+  const rects = Array.isArray(enriched?.selectionRects) ? enriched.selectionRects : [];
+  const dpr = Number(enriched?.devicePixelRatio) || 1;
+  return await applySpotlightHighlight(shot, rects, dpr);
+}
+
+function roundedRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+  if (typeof ctx.roundRect === "function") { ctx.roundRect(x, y, w, h, rr); return; }
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
 }
 
 async function captureVisibleTabScreenshot(windowId) {
@@ -883,10 +1017,11 @@ chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
   // Fire selection capture and screenshot in parallel — both depend on the
   // tab still being focused, and captureVisibleTab will only work while the
   // popup hasn't yet stolen focus.
-  const [enriched, screenshot] = await Promise.all([
+  const [enriched, rawShot] = await Promise.all([
     captureSelectionFromTab(tab?.id, info.frameId),
     captureVisibleTabScreenshot(tab?.windowId),
   ]);
+  const screenshot = await __qtiMaybeSpotlight(rawShot, enriched);
   const selectionText = (enriched?.selectionText || info.selectionText || "").trim();
   const quote = {
     selectionText,
@@ -972,10 +1107,11 @@ async function __qtiBuildQuoteFromActiveTab() {
   const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const tab = tabs?.[0];
   if (!tab?.id) return { error: "no active tab" };
-  const [enriched, screenshot] = await Promise.all([
+  const [enriched, rawShot] = await Promise.all([
     captureSelectionFromTab(tab.id),
     captureVisibleTabScreenshot(tab.windowId),
   ]);
+  const screenshot = await __qtiMaybeSpotlight(rawShot, enriched);
   const selectionText = String(enriched?.selectionText || "").trim();
   if (!selectionText) return { error: "no selection — highlight text first" };
   return {

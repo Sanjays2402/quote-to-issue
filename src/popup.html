@@ -472,6 +472,26 @@
             <span>0</span><span>200</span><span>400</span><span>600</span>
           </div>
         </div>
+        <div class="capture-head capture-head-row" data-highlight-row>
+          <div class="quote-meta">
+            <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 3v2"></path><path d="M12 19v2"></path>
+              <path d="M3 12h2"></path><path d="M19 12h2"></path>
+              <path d="M5.6 5.6l1.4 1.4"></path><path d="M17 17l1.4 1.4"></path>
+              <path d="M5.6 18.4l1.4-1.4"></path><path d="M17 7l1.4-1.4"></path>
+            </svg>
+            <span class="meta-label">Spotlight selection</span>
+          </div>
+          <button class="chip-toggle" type="button" data-action="toggle-highlight" aria-pressed="false" title="Dim the page around the selection in screenshots">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="7" width="18" height="10" rx="5"></rect>
+              <circle cx="9" cy="12" r="3" data-field="highlight-knob"></circle>
+            </svg>
+            <span data-field="highlight-toggle-label">Off</span>
+          </button>
+        </div>
+        <p class="settings-blurb settings-blurb-sub">When on, screenshots dim the rest of the page so the quoted text is the focal point.</p>
       </div>
 
       <footer class="form-actions">
