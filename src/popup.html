@@ -498,6 +498,49 @@
     </section>
   </template>
 
+  <template id="tpl-recent-issues">
+    <section class="recent-issues glass" data-recent-issues>
+      <header class="recent-issues-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+          <span class="meta-label">Recent issues</span>
+        </div>
+        <div class="recent-issues-actions">
+          <span class="recent-issues-count" data-field="recent-issues-count"></span>
+          <button class="icon-btn ghost" type="button" data-action="clear-recent-issues" title="Clear history" aria-label="Clear history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path>
+              <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path>
+            </svg>
+          </button>
+        </div>
+      </header>
+      <ul class="recent-issues-list" data-recent-issues-list role="list"></ul>
+    </section>
+  </template>
+
+  <template id="tpl-recent-issue-row">
+    <li class="recent-issue-row" role="listitem">
+      <a class="recent-issue-link" data-field="recent-issue-link">
+        <span class="recent-issue-title" data-field="recent-issue-title"></span>
+        <span class="recent-issue-meta">
+          <span class="recent-issue-repo" data-field="recent-issue-repo"></span>
+          <span class="recent-issue-number" data-field="recent-issue-number"></span>
+          <span class="draft-dot" aria-hidden="true"></span>
+          <span class="recent-issue-time" data-field="recent-issue-time"></span>
+        </span>
+      </a>
+      <button class="recent-issue-remove" type="button" data-action="remove-recent-issue" aria-label="Remove from history" title="Remove from history">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+        </svg>
+      </button>
+    </li>
+  </template>
+
   <script type="module" src="popup.js"></script>
 </body>
 </html>

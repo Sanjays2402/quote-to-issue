@@ -1343,3 +1343,119 @@ body[data-theme="light"] .template-body { background: rgba(0, 0, 0, 0.04); }
 @media (prefers-reduced-motion: reduce) {
   .btn.primary::after { display: none; }
 }
+
+/* Recent issues panel — last filed history */
+.recent-issues {
+  margin-top: 12px;
+  padding: 12px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.recent-issues-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.recent-issues-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.recent-issues-count {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: -0.005em;
+}
+.recent-issues-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.recent-issues-list::-webkit-scrollbar { width: 8px; }
+.recent-issues-list::-webkit-scrollbar-thumb {
+  background: var(--hairline-strong);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 8px;
+}
+.recent-issues-list::-webkit-scrollbar-thumb:hover { background: var(--accent-ring); background-clip: padding-box; }
+.recent-issue-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 10px;
+  background: var(--glass-soft);
+  border: 1px solid var(--hairline);
+  transition: background 180ms var(--ease), border-color 180ms var(--ease), transform 180ms var(--ease);
+}
+.recent-issue-row:hover { background: var(--glass-strong); border-color: var(--hairline-strong); }
+.recent-issue-link {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 10px 0 0 10px;
+  min-width: 0;
+}
+.recent-issue-link:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
+}
+.recent-issue-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-issue-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: -0.005em;
+  min-width: 0;
+}
+.recent-issue-repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-issue-number {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.recent-issue-time {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.recent-issue-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-radius: 0 10px 10px 0;
+  transition: color 180ms var(--ease), background 180ms var(--ease);
+}
+.recent-issue-remove svg { width: 14px; height: 14px; }
+.recent-issue-remove:hover { color: var(--danger, #f87171); background: var(--glass-strong); }
+.recent-issue-remove:focus-visible { outline: 2px solid var(--accent-ring); outline-offset: -2px; }

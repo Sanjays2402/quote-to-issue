@@ -19,7 +19,10 @@ const STORAGE_KEYS = Object.freeze({
   bulkQuotes: "qti.bulkQuotes",
   bulkState: "qti.bulkState",
   captureSettings: "qti.captureSettings",
+  recentIssues: "qti.recentIssues",
 });
+
+const MAX_RECENT_ISSUES = 10;
 
 // ---------------------------------------------------------------------------
 // Capture settings — toggle + radius for surrounding-context scraping
@@ -73,6 +76,8 @@ const tplDrafts = document.getElementById("tpl-drafts");
 const tplDraftRow = document.getElementById("tpl-draft-row");
 const tplBulk = document.getElementById("tpl-bulk");
 const tplBulkRow = document.getElementById("tpl-bulk-row");
+const tplRecentIssues = document.getElementById("tpl-recent-issues");
+const tplRecentIssueRow = document.getElementById("tpl-recent-issue-row");
 
 let settingsOpen = false;
 
@@ -795,6 +800,62 @@ async function clearBulkQuotes() {
   await chrome.storage.local.remove(STORAGE_KEYS.bulkQuotes);
 }
 
+// ---------------------------------------------------------------------------
+// Recent issues — last N filed, click to reopen on GitHub
+// ---------------------------------------------------------------------------
+function normalizeRecentIssues(list) {
+  if (!Array.isArray(list)) return [];
+  const valid = [];
+  for (const raw of list) {
+    if (!raw || typeof raw !== "object") continue;
+    const repo = String(raw.repo || "").trim();
+    if (!/^[^\s/]+\/[^\s/]+$/.test(repo)) continue;
+    const num = Number(raw.number);
+    if (!Number.isFinite(num) || num <= 0) continue;
+    const htmlUrl = String(raw.htmlUrl || "").trim();
+    if (!/^https?:\/\//.test(htmlUrl)) continue;
+    const title = String(raw.title || "").slice(0, 280);
+    const filedAt = typeof raw.filedAt === "string" ? raw.filedAt : new Date().toISOString();
+    valid.push({ repo, number: num, htmlUrl, title, filedAt });
+  }
+  valid.sort((a, b) => (Date.parse(b.filedAt) || 0) - (Date.parse(a.filedAt) || 0));
+  const out = [];
+  const seen = new Set();
+  for (const v of valid) {
+    const key = `${v.repo.toLowerCase()}#${v.number}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+    if (out.length >= MAX_RECENT_ISSUES) break;
+  }
+  return out;
+}
+
+async function getRecentIssues() {
+  if (!chrome?.storage?.local) return [];
+  const out = await chrome.storage.local.get(STORAGE_KEYS.recentIssues);
+  return normalizeRecentIssues(out[STORAGE_KEYS.recentIssues]);
+}
+
+async function addRecentIssue(entry) {
+  if (!chrome?.storage?.local) return;
+  const cur = await getRecentIssues();
+  const merged = normalizeRecentIssues([{ ...entry, filedAt: new Date().toISOString() }, ...cur]);
+  await chrome.storage.local.set({ [STORAGE_KEYS.recentIssues]: merged });
+}
+
+async function clearRecentIssues() {
+  if (!chrome?.storage?.local) return;
+  await chrome.storage.local.remove(STORAGE_KEYS.recentIssues);
+}
+
+async function removeRecentIssue(repo, number) {
+  if (!chrome?.storage?.local) return;
+  const cur = await getRecentIssues();
+  const next = cur.filter((i) => !(i.repo.toLowerCase() === String(repo).toLowerCase() && i.number === Number(number)));
+  await chrome.storage.local.set({ [STORAGE_KEYS.recentIssues]: next });
+}
+
 async function loadBulkState() {
   if (!chrome?.storage?.local) return {};
   const out = await chrome.storage.local.get(STORAGE_KEYS.bulkState);
@@ -856,6 +917,7 @@ if (typeof globalThis !== "undefined") {
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeDrafts, MAX_DRAFTS,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
+    normalizeRecentIssues, MAX_RECENT_ISSUES,
     renderMarkdownPreview, escapeHtml,
     normalizeCaptureSettings, DEFAULT_CAPTURE_SETTINGS,
     CONTEXT_RADIUS_MIN, CONTEXT_RADIUS_MAX,
@@ -1493,6 +1555,9 @@ function buildFormNode(q, state) {
       if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
       const created = reply.result || {};
       await addRecentRepo(repo.value).catch(() => {});
+      if (created?.number && created?.htmlUrl) {
+        await addRecentIssue({ repo: repo.value, number: created.number, htmlUrl: created.htmlUrl, title }).catch(() => {});
+      }
       if (activeDraftId) await deleteDraft(activeDraftId).catch(() => {});
       await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);
       await saveFormState({ title: "", draftId: null });
@@ -1702,6 +1767,7 @@ function renderSuccess(info) {
     loadPending();
   });
   root.replaceChildren(node);
+  appendRecentIssuesSection().catch(() => {});
 }
 
 function renderQuote(q) {
@@ -1724,6 +1790,48 @@ async function loadPending() {
   if (q && q.selectionText) renderQuote(q);
   else renderEmpty();
   await appendBulkSection();
+  await appendRecentIssuesSection();
+}
+
+async function appendRecentIssuesSection() {
+  if (!tplRecentIssues || !tplRecentIssueRow) return;
+  for (const existing of root.querySelectorAll("[data-recent-issues]")) existing.remove();
+  const issues = await getRecentIssues().catch(() => []);
+  if (!issues.length) return;
+  const frag = tplRecentIssues.content.cloneNode(true);
+  const section = frag.querySelector("[data-recent-issues]");
+  const list = frag.querySelector("[data-recent-issues-list]");
+  const count = frag.querySelector('[data-field="recent-issues-count"]');
+  if (count) count.textContent = `${issues.length} · newest first`;
+  for (const it of issues) {
+    const row = tplRecentIssueRow.content.cloneNode(true);
+    const link = row.querySelector('[data-field="recent-issue-link"]');
+    const titleEl = row.querySelector('[data-field="recent-issue-title"]');
+    const repoEl = row.querySelector('[data-field="recent-issue-repo"]');
+    const numEl = row.querySelector('[data-field="recent-issue-number"]');
+    const timeEl = row.querySelector('[data-field="recent-issue-time"]');
+    const removeBtn = row.querySelector('[data-action="remove-recent-issue"]');
+    link.href = it.htmlUrl;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    titleEl.textContent = it.title || `Issue #${it.number}`;
+    repoEl.textContent = it.repo;
+    numEl.textContent = `#${it.number}`;
+    timeEl.textContent = fmtRelative(it.filedAt);
+    removeBtn?.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await removeRecentIssue(it.repo, it.number);
+      await appendRecentIssuesSection();
+    });
+    list.appendChild(row);
+  }
+  const clearBtn = section.querySelector('[data-action="clear-recent-issues"]');
+  clearBtn?.addEventListener("click", async () => {
+    await clearRecentIssues();
+    await appendRecentIssuesSection();
+  });
+  root.appendChild(section);
 }
 
 async function appendBulkSection() {
@@ -1872,6 +1980,9 @@ async function appendBulkSection() {
         if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
         const created = reply.result || {};
         setRowState(q.id, "done", created);
+        if (created?.number && created?.htmlUrl) {
+          await addRecentIssue({ repo: repo.value, number: created.number, htmlUrl: created.htmlUrl, title }).catch(() => {});
+        }
         // Remove the successfully filed quote from storage so partial failure
         // leaves only the unfiled ones for retry.
         await removeBulkQuote(q.id).catch(() => {});

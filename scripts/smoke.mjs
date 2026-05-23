@@ -472,3 +472,42 @@ if (bulkCode.length !== 1 || !bulkCode[0].isCode || bulkCode[0].codeLanguage !==
 }
 console.log("\u2713 code-block smoke ok");
 
+// --- Recent issues panel --------------------------------------------------
+const { normalizeRecentIssues, MAX_RECENT_ISSUES } = globalThis.__qti;
+if (typeof normalizeRecentIssues !== "function") { console.error("normalizeRecentIssues missing"); process.exit(1); }
+if (typeof MAX_RECENT_ISSUES !== "number" || MAX_RECENT_ISSUES < 5) { console.error("MAX_RECENT_ISSUES invalid"); process.exit(1); }
+if (normalizeRecentIssues(null).length !== 0) { console.error("normalizeRecentIssues null"); process.exit(1); }
+const riIn = [
+  { repo: "vercel/next.js", number: 12, htmlUrl: "https://github.com/vercel/next.js/issues/12", title: "older", filedAt: "2026-05-20T10:00:00Z" },
+  { repo: "vercel/next.js", number: 12, htmlUrl: "https://github.com/vercel/next.js/issues/12", title: "dup newer", filedAt: "2026-05-22T10:00:00Z" },
+  { repo: "facebook/react", number: 99, htmlUrl: "https://github.com/facebook/react/issues/99", title: "react bug", filedAt: "2026-05-21T10:00:00Z" },
+  { repo: "bad", number: 5, htmlUrl: "https://github.com/x/y/issues/5" }, // bad repo
+  { repo: "o/r", number: 0, htmlUrl: "https://github.com/o/r/issues/0" }, // bad num
+  { repo: "o/r", number: 7, htmlUrl: "javascript:alert(1)" }, // bad url
+  null,
+];
+const riOut = normalizeRecentIssues(riIn);
+if (riOut.length !== 2) { console.error("normalizeRecentIssues length wrong:", riOut); process.exit(1); }
+if (riOut[0].repo !== "vercel/next.js" || riOut[0].title !== "dup newer") { console.error("normalizeRecentIssues dedupe+sort wrong:", riOut); process.exit(1); }
+if (riOut[1].repo !== "facebook/react") { console.error("normalizeRecentIssues 2nd wrong"); process.exit(1); }
+const riBig = Array.from({ length: MAX_RECENT_ISSUES + 5 }, (_, i) => ({
+  repo: `o/r${i}`, number: i + 1, htmlUrl: `https://github.com/o/r${i}/issues/${i + 1}`,
+  filedAt: new Date(2026, 0, 1 + i).toISOString(),
+}));
+if (normalizeRecentIssues(riBig).length !== MAX_RECENT_ISSUES) { console.error("normalizeRecentIssues cap wrong"); process.exit(1); }
+console.log("\u2713 recent-issues smoke ok");
+
+const popupHtmlRI = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of ["tpl-recent-issues", "tpl-recent-issue-row", "data-recent-issues", "data-recent-issues-list", 'data-action="clear-recent-issues"', 'data-action="remove-recent-issue"', 'data-field="recent-issue-link"', 'data-field="recent-issue-title"', 'data-field="recent-issue-repo"', 'data-field="recent-issue-number"', 'data-field="recent-issue-time"', 'data-field="recent-issues-count"']) {
+  if (!popupHtmlRI.includes(needle)) { console.error("popup.html missing recent-issues token:", needle); process.exit(1); }
+}
+const popupCssRI = fs.readFileSync("src/popup.css", "utf8");
+for (const needle of [".recent-issues", ".recent-issues-list", ".recent-issue-row", ".recent-issue-link", ".recent-issue-title", ".recent-issue-meta", ".recent-issue-number", ".recent-issue-remove"]) {
+  if (!popupCssRI.includes(needle)) { console.error("popup.css missing recent-issues token:", needle); process.exit(1); }
+}
+const popupJsRI = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["normalizeRecentIssues", "addRecentIssue", "getRecentIssues", "appendRecentIssuesSection", "clearRecentIssues", "removeRecentIssue", "qti.recentIssues"]) {
+  if (!popupJsRI.includes(needle)) { console.error("popup.js missing recent-issues token:", needle); process.exit(1); }
+}
+console.log("\u2713 recent-issues integration smoke ok");
+

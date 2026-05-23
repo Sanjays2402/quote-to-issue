@@ -23,7 +23,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Surrounding-context capture (N chars before/after selection) toggle
 - [x] Author/byline + publish date scraping for news/blog pages
 - [x] Code block detection: wrap selections from <pre>/<code> as fenced markdown
-- [ ] Recent-issues panel: list last 10 issues filed, click to reopen on GitHub
+- [x] Recent-issues panel: list last 10 issues filed, click to reopen on GitHub
 - [ ] Per-repo default labels + assignees with chip editor
 - [ ] Settings page with liquid-glass design and token rotation
 - [ ] Offline queue: retry failed POSTs when connectivity returns
