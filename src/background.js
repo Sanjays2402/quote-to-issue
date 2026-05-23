@@ -87,10 +87,86 @@ function ensureContextMenu() {
   }
 }
 
+/**
+ * Runs in the page context. Pulls the exact selection plus a small amount of
+ * surrounding text so the issue body has useful context, not just the snippet.
+ * Returns a JSON-safe object — no DOM references leak across the boundary.
+ */
+function __qtiCaptureSelection() {
+  try {
+    const sel = window.getSelection && window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "" };
+    }
+    const range = sel.getRangeAt(0);
+    const selectionText = sel.toString();
+    // Serialize the selection to HTML (kept short — popup will sanitize/escape).
+    let selectionHtml = "";
+    try {
+      const frag = range.cloneContents();
+      const div = document.createElement("div");
+      div.appendChild(frag);
+      selectionHtml = div.innerHTML.slice(0, 4000);
+    } catch { /* ignore */ }
+    // Walk up to a block-ish ancestor for the surrounding paragraph.
+    let node = range.commonAncestorContainer;
+    if (node.nodeType !== 1) node = node.parentNode;
+    const BLOCK = /^(P|DIV|LI|BLOCKQUOTE|ARTICLE|SECTION|TD|PRE|FIGCAPTION|DD|DT)$/;
+    let block = node;
+    while (block && block !== document.body && !(block.tagName && BLOCK.test(block.tagName))) {
+      block = block.parentNode;
+    }
+    let contextBefore = "", contextAfter = "";
+    if (block && block.textContent) {
+      const full = block.textContent.replace(/\s+/g, " ").trim();
+      const idx = full.indexOf(selectionText.replace(/\s+/g, " ").trim());
+      if (idx >= 0) {
+        contextBefore = full.slice(Math.max(0, idx - 240), idx).trim();
+        contextAfter = full.slice(idx + selectionText.length, idx + selectionText.length + 240).trim();
+      }
+    }
+    // Find nearest preceding heading for section anchor.
+    let nearestHeading = "";
+    let cur = (node.nodeType === 1) ? node : node.parentNode;
+    while (cur && cur !== document.body) {
+      let sib = cur.previousElementSibling;
+      while (sib) {
+        if (/^H[1-6]$/.test(sib.tagName)) { nearestHeading = (sib.textContent || "").trim(); break; }
+        sib = sib.previousElementSibling;
+      }
+      if (nearestHeading) break;
+      cur = cur.parentNode;
+    }
+    return { selectionText, selectionHtml, contextBefore, contextAfter, nearestHeading };
+  } catch (err) {
+    return { selectionText: "", selectionHtml: "", contextBefore: "", contextAfter: "", nearestHeading: "", error: String(err && err.message || err) };
+  }
+}
+
+async function captureSelectionFromTab(tabId, frameId) {
+  if (!chrome.scripting?.executeScript || tabId == null) return null;
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: frameId != null ? { tabId, frameIds: [frameId] } : { tabId },
+      func: __qtiCaptureSelection,
+    });
+    return results?.[0]?.result ?? null;
+  } catch (err) {
+    console.warn(LOG_PREFIX, "executeScript failed", err);
+    return null;
+  }
+}
+
 chrome.contextMenus?.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId !== CONTEXT_MENU_ID) return;
+  const enriched = await captureSelectionFromTab(tab?.id, info.frameId);
+  const selectionText = (enriched?.selectionText || info.selectionText || "").trim();
   const quote = {
-    selectionText: info.selectionText ?? "",
+    selectionText,
+    selectionHtml: enriched?.selectionHtml ?? "",
+    contextBefore: enriched?.contextBefore ?? "",
+    contextAfter: enriched?.contextAfter ?? "",
+    nearestHeading: enriched?.nearestHeading ?? "",
     pageUrl: info.pageUrl ?? tab?.url ?? "",
     pageTitle: tab?.title ?? "",
     frameUrl: info.frameUrl ?? "",

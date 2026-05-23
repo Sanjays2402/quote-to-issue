@@ -23,6 +23,13 @@ for (const needle of [
   "chrome.contextMenus",
   "contexts: [\"selection\"]",
   "File as GitHub issue",
+  "chrome.scripting",
+  "captureSelectionFromTab",
+  "contextBefore",
+  "contextAfter",
+  "nearestHeading",
+  "pageUrl",
+  "capturedAt",
 ]) {
   if (!sw.includes(needle)) {
     console.error("background.js missing scaffolding token:", needle);

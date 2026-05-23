@@ -6,15 +6,80 @@
 <link rel="stylesheet" href="popup.css">
 </head>
 <body data-theme="dark">
-  <header class="topbar">
-    <div class="title">Quote to Issue</div>
-    <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
+  <div class="ambient" aria-hidden="true">
+    <span class="blob blob-a"></span>
+    <span class="blob blob-b"></span>
+  </div>
+
+  <header class="topbar glass">
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M7 8h7a4 4 0 0 1 0 8h-2"></path>
+        <path d="M7 8v8"></path>
+        <path d="M17 6l-2 2 2 2"></path>
+      </svg>
+      <span class="title">Quote to Issue</span>
+    </div>
+    <button id="settings-btn" class="icon-btn" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.96 19.35a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.04H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.65 8.96a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1.04-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.04 4.65a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.07.34.27.65.55.86.28.21.62.32.97.32H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15z"></path>
+      </svg>
+    </button>
   </header>
-  <main id="root" class="content">
-    <p class="placeholder">Select text on any page → file a GitHub issue with source URL, screenshot, and surrounding context.</p>
-    <p class="placeholder small">Roadmap features will populate this view.</p>
-  </main>
-  <footer class="footer"><span class="version">v0.1.0</span></footer>
+
+  <main id="root" class="content"></main>
+
+  <footer class="footer">
+    <span class="version">v0.1.0</span>
+  </footer>
+
+  <template id="tpl-empty">
+    <div class="empty">
+      <svg class="empty-art" viewBox="0 0 160 110" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="22" y="22" width="116" height="74" rx="14"></rect>
+        <path d="M40 46h60"></path>
+        <path d="M40 60h74"></path>
+        <path d="M40 74h44"></path>
+        <path d="M118 80l8 8 14-16"></path>
+      </svg>
+      <h2 class="empty-title">No quote captured</h2>
+      <p class="empty-sub">Select text on any page, right-click, then choose <em>File as GitHub issue</em>.</p>
+    </div>
+  </template>
+
+  <template id="tpl-quote">
+    <section class="quote glass">
+      <header class="quote-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M9 7h6"></path><path d="M9 11h6"></path><path d="M9 15h4"></path>
+            <rect x="4" y="3" width="16" height="18" rx="3"></rect>
+          </svg>
+          <span class="meta-label">Captured quote</span>
+        </div>
+        <button class="icon-btn ghost" data-action="clear" title="Clear" aria-label="Clear">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+          </svg>
+        </button>
+      </header>
+
+      <blockquote class="quote-body" data-field="selectionText"></blockquote>
+
+      <div class="context" data-context hidden>
+        <span class="context-label">Context</span>
+        <p class="context-text"><span class="dim" data-field="contextBefore"></span> <span class="hi" data-field="hi"></span> <span class="dim" data-field="contextAfter"></span></p>
+      </div>
+
+      <dl class="source">
+        <div class="row"><dt>Page</dt><dd><a data-field="pageLink" target="_blank" rel="noopener noreferrer"></a></dd></div>
+        <div class="row heading-row" data-heading-row hidden><dt>Section</dt><dd data-field="nearestHeading"></dd></div>
+        <div class="row"><dt>Captured</dt><dd data-field="capturedAtPretty"></dd></div>
+      </dl>
+    </section>
+  </template>
+
   <script type="module" src="popup.js"></script>
 </body>
 </html>
