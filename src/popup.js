@@ -121,6 +121,105 @@ const tplQuote = document.getElementById("tpl-quote");
 const tplForm = document.getElementById("tpl-form");
 const tplSettings = document.getElementById("tpl-settings");
 const tplSuccess = document.getElementById("tpl-success");
+const tplToast = document.getElementById("tpl-toast");
+const toastHost = document.getElementById("toast-host");
+let activeToastTimer = null;
+
+function showSuccessToast({ htmlUrl, repo, number, durationMs = 6500 } = {}) {
+  if (!tplToast || !toastHost) return null;
+  // Dismiss any existing toast before showing a new one.
+  for (const el of toastHost.querySelectorAll("[data-toast]")) el.remove();
+  if (activeToastTimer) { clearTimeout(activeToastTimer); activeToastTimer = null; }
+  const frag = tplToast.content.cloneNode(true);
+  const node = frag.querySelector("[data-toast]");
+  if (!node) return null;
+  const sub = node.querySelector('[data-field="toast-sub"]');
+  if (sub) {
+    sub.textContent = (repo && number != null) ? `${repo} #${number}` : (htmlUrl || "");
+    if (htmlUrl) sub.title = htmlUrl;
+  }
+  const copyBtn = node.querySelector('[data-action="toast-copy"]');
+  const copyLabel = node.querySelector('[data-field="toast-copy-label"]');
+  const openBtn = node.querySelector('[data-action="toast-open"]');
+  const closeBtn = node.querySelector('[data-action="toast-close"]');
+  const progress = node.querySelector('[data-field="toast-progress"]');
+
+  const dismiss = () => {
+    if (!node.isConnected) return;
+    node.classList.remove("in");
+    node.classList.add("out");
+    if (activeToastTimer) { clearTimeout(activeToastTimer); activeToastTimer = null; }
+    setTimeout(() => { try { node.remove(); } catch {} }, 240);
+  };
+
+  if (!htmlUrl) {
+    copyBtn?.setAttribute("disabled", "true");
+    if (openBtn) { openBtn.setAttribute("disabled", "true"); openBtn.style.opacity = "0.5"; openBtn.style.pointerEvents = "none"; }
+  }
+
+  copyBtn?.addEventListener("click", async () => {
+    if (!htmlUrl) return;
+    let copied = false;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(htmlUrl);
+        copied = true;
+      }
+    } catch {}
+    if (!copied) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = htmlUrl; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        copied = document.execCommand("copy");
+        ta.remove();
+      } catch {}
+    }
+    if (copied) {
+      copyBtn.classList.add("copied");
+      if (copyLabel) copyLabel.textContent = "Copied";
+      // Pin the toast a bit longer after a copy so the user can confirm.
+      if (activeToastTimer) { clearTimeout(activeToastTimer); }
+      activeToastTimer = setTimeout(dismiss, 2200);
+    }
+  });
+
+  openBtn?.addEventListener("click", () => {
+    if (!htmlUrl) return;
+    try {
+      if (chrome?.tabs?.create) chrome.tabs.create({ url: htmlUrl, active: true });
+      else window.open(htmlUrl, "_blank", "noopener,noreferrer");
+    } catch {
+      try { window.open(htmlUrl, "_blank", "noopener,noreferrer"); } catch {}
+    }
+    dismiss();
+  });
+
+  closeBtn?.addEventListener("click", dismiss);
+  node.addEventListener("mouseenter", () => {
+    if (activeToastTimer) { clearTimeout(activeToastTimer); activeToastTimer = null; }
+    if (progress) progress.style.transition = "none";
+  });
+  node.addEventListener("mouseleave", () => {
+    if (progress) {
+      progress.style.transition = `transform ${Math.max(800, durationMs / 2)}ms linear`;
+      progress.style.transform = "scaleX(0)";
+    }
+    activeToastTimer = setTimeout(dismiss, Math.max(1200, durationMs / 2));
+  });
+
+  toastHost.appendChild(node);
+  // Force layout, then animate in.
+  requestAnimationFrame(() => {
+    node.classList.add("in");
+    if (progress) {
+      progress.style.transition = `transform ${durationMs}ms linear`;
+      progress.style.transform = "scaleX(0)";
+    }
+  });
+  activeToastTimer = setTimeout(dismiss, durationMs);
+  return node;
+}
 const tplDrafts = document.getElementById("tpl-drafts");
 const tplDraftRow = document.getElementById("tpl-draft-row");
 const tplBulk = document.getElementById("tpl-bulk");
@@ -2657,6 +2756,9 @@ function renderSuccess(info) {
   });
   root.replaceChildren(node);
   appendRecentIssuesSection().catch(() => {});
+  try {
+    showSuccessToast({ htmlUrl: info?.htmlUrl, repo: info?.repo, number: info?.number });
+  } catch {}
 }
 
 function renderQuote(q) {

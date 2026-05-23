@@ -53,6 +53,48 @@
 
   <main id="root" class="content"></main>
 
+  <div id="toast-host" class="toast-host" aria-live="polite" aria-atomic="true"></div>
+
+  <template id="tpl-toast">
+    <div class="toast glass" role="status" data-toast>
+      <div class="toast-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M8 12.5l2.5 2.5L16 9.5"></path>
+        </svg>
+      </div>
+      <div class="toast-body">
+        <p class="toast-title" data-field="toast-title">Issue filed</p>
+        <p class="toast-sub" data-field="toast-sub"></p>
+      </div>
+      <div class="toast-actions">
+        <button class="toast-btn" type="button" data-action="toast-copy" title="Copy link" aria-label="Copy link">
+          <svg class="toast-icon-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="9" width="12" height="12" rx="2"></rect>
+            <path d="M5 15V5a2 2 0 0 1 2-2h10"></path>
+          </svg>
+          <svg class="toast-icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 12.5l4 4L19 7"></path>
+          </svg>
+          <span class="toast-btn-label" data-field="toast-copy-label">Copy link</span>
+        </button>
+        <button class="toast-btn primary" type="button" data-action="toast-open" title="Open in new tab" aria-label="Open in new tab">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path>
+            <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"></path>
+          </svg>
+          <span class="toast-btn-label">Open</span>
+        </button>
+        <button class="toast-close" type="button" data-action="toast-close" title="Dismiss" aria-label="Dismiss">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 6l12 12"></path><path d="M18 6l-12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <span class="toast-progress" data-field="toast-progress" aria-hidden="true"></span>
+    </div>
+  </template>
+
   <footer class="footer">
     <span class="version">v0.1.0</span>
   </footer>
