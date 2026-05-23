@@ -611,6 +611,14 @@ function renderTemplate(tmpl, q) {
     published_at: publishedAt,
     screenshot_note: screenshotNote,
     host: hostnameOf(q?.pageUrl),
+    // Short aliases — match the public placeholder vocabulary from the roadmap.
+    // {{url}} resolves to the scroll-to-text anchored URL (richest by default),
+    // {{selection}} to the raw selection text, {{title}} to the page title,
+    // {{date}} to the YYYY-MM-DD captured date for human-friendly templates.
+    url: sourceUrlAnchor || sourceUrl,
+    selection: quoted,
+    title: sourceTitle,
+    date: formatPublishDate(captured) || captured,
   };
   return t.replace(/\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}/gi, (m, name) => {
     const v = vars[String(name).toLowerCase()];
@@ -1550,7 +1558,7 @@ function buildFormNode(q, state) {
       const remaining = MAX_TEMPLATE_LEN - tmplBody.value.length;
       tmplHint.textContent = remaining < 500
         ? `${remaining} characters left`
-        : "Placeholders: {{quote}}, {{quote_blockquote}}, {{source_title}}, {{source_url}}, {{section}}, {{captured}}, {{screenshot_note}}.";
+        : "Placeholders: {{selection}}, {{quote_blockquote}}, {{title}}, {{url}}, {{date}}, {{section}}, {{author}}, {{screenshot_note}}.";
       tmplHint.classList.remove("error");
     }
     refreshTemplateStatus();

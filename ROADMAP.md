@@ -28,7 +28,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Settings page with liquid-glass design and token rotation
 - [x] Offline queue: retry failed POSTs when connectivity returns
 - [x] Duplicate-issue detector: search repo for similar open issues before filing
-- [ ] Issue body templates with variables ({{url}}, {{selection}}, {{title}}, {{date}})
+- [x] Issue body templates with variables ({{url}}, {{selection}}, {{title}}, {{date}})
 - [ ] OAuth device-flow login as alternative to PAT
 - [ ] Per-repo issue type picker (bug/feature/question) with matching label presets
 - [ ] Annotated screenshot: draw rectangle/arrow over capture before attaching

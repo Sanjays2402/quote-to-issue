@@ -772,3 +772,17 @@ for (const needle of ["extractDupTokens", "rankDuplicates", "scoreDuplicateMatch
   if (!popupJsDup.includes(needle)) { console.error("popup.js missing dup-detector token:", needle); process.exit(1); }
 }
 console.log("\u2713 dup-detector smoke ok");
+
+// --- Template short-alias placeholders ({{url}}, {{selection}}, {{title}}, {{date}}) ---
+const aliasOut = renderTemplate(
+  "T={{title}}\nU={{url}}\nS={{selection}}\nD={{date}}",
+  { selectionText: "hello world", pageTitle: "Doc", pageUrl: "https://example.com/p", capturedAt: "2026-05-23T10:00:00Z" },
+);
+if (!aliasOut.includes("T=Doc")) { console.error("alias {{title}} failed:", aliasOut); process.exit(1); }
+if (!aliasOut.includes("U=https://example.com/p#:~:text=hello%20world")) { console.error("alias {{url}} should be anchored:", aliasOut); process.exit(1); }
+if (!aliasOut.includes("S=hello world")) { console.error("alias {{selection}} failed:", aliasOut); process.exit(1); }
+if (!aliasOut.includes("D=2026-05-23")) { console.error("alias {{date}} failed:", aliasOut); process.exit(1); }
+// {{url}} falls back to plain pageUrl when there is no selection to anchor on.
+const aliasFallback = renderTemplate("U={{url}}", { selectionText: "", pageUrl: "https://example.com/p" });
+if (aliasFallback !== "U=https://example.com/p") { console.error("alias {{url}} fallback wrong:", aliasFallback); process.exit(1); }
+console.log("\u2713 template-aliases smoke ok");
