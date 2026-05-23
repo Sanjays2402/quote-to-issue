@@ -481,10 +481,73 @@ function renderMarkdownPreview(src) {
   return html.join("\n");
 }
 
+/**
+ * Fuzzy subsequence match.
+ * Every char in `query` must appear in `text` in order (case-insensitive).
+ * Returns { score, indices } with bonuses for contiguous runs, word
+ * boundaries (start, /, -, _, .), and the matched positions for highlighting.
+ * Returns null when the query is not a subsequence of the text.
+ */
+function fuzzyMatch(text, query) {
+  const t = String(text || "");
+  const q = String(query || "");
+  if (!q) return { score: 0, indices: [] };
+  const tl = t.toLowerCase();
+  const ql = q.toLowerCase();
+  const indices = [];
+  let qi = 0;
+  let score = 0;
+  let prev = -2;
+  for (let i = 0; i < tl.length && qi < ql.length; i++) {
+    if (tl[i] !== ql[qi]) continue;
+    indices.push(i);
+    // Contiguous-run bonus.
+    if (i === prev + 1) score += 5;
+    else score += 1;
+    // Word-boundary bonus.
+    if (i === 0 || /[\/\-_.\s]/.test(tl[i - 1])) score += 3;
+    // Exact-case bonus.
+    if (t[i] === q[qi]) score += 0.5;
+    prev = i;
+    qi += 1;
+  }
+  if (qi < ql.length) return null;
+  // Slight penalty for longer haystacks so shorter, more specific repos rank up.
+  score -= Math.max(0, t.length - q.length) * 0.01;
+  return { score, indices };
+}
+
+function renderRepoValue(el, value, indices) {
+  if (!el) return;
+  el.replaceChildren();
+  const v = String(value || "");
+  const set = new Set(Array.isArray(indices) ? indices : []);
+  if (set.size === 0) { el.textContent = v; return; }
+  for (let i = 0; i < v.length; i++) {
+    if (set.has(i)) {
+      const mark = document.createElement("span");
+      mark.className = "repo-recent-match";
+      mark.textContent = v[i];
+      el.appendChild(mark);
+    } else {
+      el.appendChild(document.createTextNode(v[i]));
+    }
+  }
+}
+
 function filterRecentRepos(recents, query) {
-  const q = String(query || "").trim().toLowerCase();
+  if (!Array.isArray(recents)) return [];
+  const q = String(query || "").trim();
   if (!q) return recents.slice();
-  return recents.filter((r) => r.value.toLowerCase().includes(q));
+  const ranked = [];
+  for (let i = 0; i < recents.length; i++) {
+    const r = recents[i];
+    const m = fuzzyMatch(r.value, q);
+    if (!m) continue;
+    ranked.push({ entry: r, score: m.score, indices: m.indices, idx: i });
+  }
+  ranked.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
+  return ranked.map((r) => Object.assign({}, r.entry, { _matchIndices: r.indices }));
 }
 
 // ---------------------------------------------------------------------------
@@ -657,7 +720,7 @@ async function dataUrlToBlob(dataUrl) {
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
     parseRepo, parseLabels, deriveTitle, buildMarkdownBody, buildSourceUrlWithAnchor, deriveScreenshotFilename,
-    formatBytes, normalizeRecentRepos, filterRecentRepos,
+    formatBytes, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeDrafts, MAX_DRAFTS,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
@@ -920,7 +983,7 @@ function buildFormNode(q, state) {
             <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
           </svg>
         </span>`;
-      row.querySelector(".repo-recent-value").textContent = entry.value;
+      renderRepoValue(row.querySelector(".repo-recent-value"), entry.value, entry._matchIndices);
       row.querySelector(".repo-recent-time").textContent = entry.lastUsed ? fmtRelative(entry.lastUsed) : "";
       row.addEventListener("mousedown", (e) => {
         // Avoid mousedown stealing focus before we react to click.

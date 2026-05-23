@@ -830,6 +830,7 @@ body[data-theme="light"] .template-body { background: rgba(0, 0, 0, 0.04); }
 .repo-recent[aria-selected="true"] { background: var(--accent-soft); }
 .repo-recent .repo-recent-icon { width: 14px; height: 14px; color: var(--fg-faint); flex: none; }
 .repo-recent .repo-recent-value { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-recent .repo-recent-match { color: var(--accent); font-weight: 600; }
 .repo-recent .repo-recent-time { color: var(--fg-faint); font-size: 11px; flex: none; }
 .repo-recent .repo-recent-remove {
   width: 22px;
