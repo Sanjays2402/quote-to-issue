@@ -1590,13 +1590,26 @@ function normalizeQuoteHistory(list) {
     const pageTitle = String(raw.pageTitle || "").slice(0, 280);
     const filedAt = typeof raw.filedAt === "string" ? raw.filedAt : new Date().toISOString();
     const id = String(raw.id || `${repo}#${number}#${filedAt}`);
+    const pinned = !!raw.pinned;
+    const pinnedAt = pinned
+      ? (typeof raw.pinnedAt === "string" && raw.pinnedAt ? raw.pinnedAt : filedAt)
+      : "";
     valid.push({
       id, repo, number: Number.isFinite(number) && number > 0 ? number : 0,
       htmlUrl: /^https?:\/\//.test(htmlUrl) ? htmlUrl : "",
       title, selectionText, pageTitle, pageUrl, filedAt,
+      pinned, pinnedAt,
     });
   }
-  valid.sort((a, b) => (Date.parse(b.filedAt) || 0) - (Date.parse(a.filedAt) || 0));
+  valid.sort((a, b) => {
+    const ap = a.pinned ? 1 : 0;
+    const bp = b.pinned ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    if (ap && bp) {
+      return (Date.parse(b.pinnedAt) || 0) - (Date.parse(a.pinnedAt) || 0);
+    }
+    return (Date.parse(b.filedAt) || 0) - (Date.parse(a.filedAt) || 0);
+  });
   const out = [];
   const seen = new Set();
   for (const v of valid) {
@@ -1625,8 +1638,26 @@ function searchQuoteHistory(list, query) {
     }
     if (ok) matches.push({ item: it, score: hits });
   }
-  matches.sort((a, b) => b.score - a.score || (Date.parse(b.item.filedAt) || 0) - (Date.parse(a.item.filedAt) || 0));
+  matches.sort((a, b) => {
+    const ap = a.item?.pinned ? 1 : 0;
+    const bp = b.item?.pinned ? 1 : 0;
+    if (ap !== bp) return bp - ap;
+    if (b.score !== a.score) return b.score - a.score;
+    if (ap && bp) {
+      return (Date.parse(b.item.pinnedAt) || 0) - (Date.parse(a.item.pinnedAt) || 0);
+    }
+    return (Date.parse(b.item.filedAt) || 0) - (Date.parse(a.item.filedAt) || 0);
+  });
   return matches.map((m) => m.item);
+}
+
+async function setQuoteHistoryPin(id, pinned) {
+  if (!chrome?.storage?.local || !id) return;
+  const cur = await getQuoteHistory();
+  const next = cur.map((e) => e.id === id
+    ? { ...e, pinned: !!pinned, pinnedAt: pinned ? new Date().toISOString() : "" }
+    : e);
+  await chrome.storage.local.set({ [STORAGE_KEYS.quoteHistory]: normalizeQuoteHistory(next) });
 }
 
 async function getQuoteHistory() {
@@ -4422,6 +4453,20 @@ async function appendQuoteHistorySection(filter) {
       const numEl = row.querySelector('[data-field="quote-history-number"]');
       const timeEl = row.querySelector('[data-field="quote-history-time"]');
       const removeBtn = row.querySelector('[data-action="remove-quote-history"]');
+      const pinBtn = row.querySelector('[data-action="toggle-quote-history-pin"]');
+      const rowEl = row.querySelector('[data-quote-history-row]');
+      if (rowEl && it.pinned) rowEl.classList.add("is-pinned");
+      if (pinBtn) {
+        pinBtn.setAttribute("aria-pressed", it.pinned ? "true" : "false");
+        pinBtn.title = it.pinned ? "Unpin" : "Pin to top";
+        pinBtn.setAttribute("aria-label", it.pinned ? "Unpin quote" : "Pin quote");
+        if (it.pinned) pinBtn.classList.add("is-pinned");
+        pinBtn.addEventListener("click", async (e) => {
+          e.preventDefault(); e.stopPropagation();
+          await setQuoteHistoryPin(it.id, !it.pinned);
+          await appendQuoteHistorySection(query);
+        });
+      }
       const url = it.htmlUrl || it.pageUrl || "";
       if (url) { link.href = url; } else { link.removeAttribute("href"); }
       titleEl.innerHTML = highlight(it.title || `Quote from ${it.repo || "page"}`, terms);

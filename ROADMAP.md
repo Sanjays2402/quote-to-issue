@@ -47,3 +47,13 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Issue comment mode: post selection as comment on an existing issue/PR by URL
 - [x] Smart label inference from selection keywords (regex + token match rules)
 - [x] Export quote history as JSON/CSV from settings page
+- [x] Quote pinning: pin frequently-used quotes to top of history panel
+- [ ] Per-repo issue title prefix (e.g. '[bug]', '[feedback]') configurable in settings
+- [ ] Markdown table builder: convert tabular selections to GitHub-flavored markdown tables
+- [ ] Selection sentiment hint: tag positive/negative/neutral feedback automatically
+- [ ] Issue attachment uploads via GitHub user-content (drag-drop files into body)
+- [ ] Page metadata capture: Open Graph image, description, canonical URL in issue body
+- [ ] Quote-to-PR comment: post selection as inline PR review comment when on a diff page
+- [ ] Multi-language UI: detect browser locale and translate popup chrome strings
+- [ ] Configurable quote signature footer (e.g. '— filed from Quote to Issue')
+- [ ] Activity heatmap on settings page showing issues filed per day for last 90 days

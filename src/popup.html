@@ -946,7 +946,13 @@
   </template>
 
   <template id="tpl-quote-history-row">
-    <li class="quote-history-row" role="listitem">
+    <li class="quote-history-row" role="listitem" data-quote-history-row>
+      <button class="quote-history-pin" type="button" data-action="toggle-quote-history-pin" aria-label="Pin quote" title="Pin to top" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 17v5"></path>
+          <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z"></path>
+        </svg>
+      </button>
       <a class="quote-history-link" data-field="quote-history-link" target="_blank" rel="noopener noreferrer">
         <span class="quote-history-title" data-field="quote-history-title"></span>
         <span class="quote-history-snippet" data-field="quote-history-snippet"></span>
