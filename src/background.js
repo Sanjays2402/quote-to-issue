@@ -664,6 +664,151 @@ on("listMilestones", async (msg) => {
   return { items, repo, state };
 });
 
+// ---------------------------------------------------------------------------
+// CODEOWNERS auto-mention — fetch and parse a repo's CODEOWNERS file, extract
+// the top-level (catch-all `*`) reviewers, and surface them so the popup can
+// auto-@-mention them in new issues.
+// ---------------------------------------------------------------------------
+
+const CODEOWNERS_PATHS = ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"];
+const CODEOWNERS_CACHE_KEY = "qti.codeownersCache";
+const CODEOWNERS_CACHE_TTL_MS = 30 * 60 * 1000;
+
+function __qtiParseCodeowners(text) {
+  const out = { catchAll: [], rules: [], owners: new Set() };
+  if (!text || typeof text !== "string") return out;
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const parts = line.split(/\s+/);
+    if (parts.length < 2) continue;
+    const pattern = parts[0];
+    const owners = parts.slice(1)
+      .map((o) => o.trim())
+      .filter((o) => /^@[A-Za-z0-9][A-Za-z0-9._\-\/]*$/.test(o))
+      .map((o) => o.replace(/^@+/, ""))
+      .filter(Boolean);
+    if (owners.length === 0) continue;
+    for (const o of owners) out.owners.add(o);
+    const rule = { pattern, owners };
+    if (pattern === "*" || pattern === "**" || pattern === "/*" || pattern === "/**") {
+      out.catchAll = owners;
+    }
+    out.rules.push(rule);
+  }
+  out.owners = Array.from(out.owners);
+  return out;
+}
+
+async function __qtiFetchCodeownersFromRepo(repo) {
+  const token = await getToken().catch(() => null);
+  const headers = {
+    "Accept": "application/vnd.github.raw",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  let lastStatus = 0;
+  for (const path of CODEOWNERS_PATHS) {
+    const url = `${GITHUB_API}/repos/${repo}/contents/${encodeURIComponent(path)}`;
+    let res;
+    try { res = await fetch(url, { headers }); } catch (err) {
+      const e = new Error(err?.message || "Network error");
+      e.networkError = true;
+      throw e;
+    }
+    if (res.status === 404) { lastStatus = 404; continue; }
+    if (res.status === 403 || res.status === 429) {
+      const reset = Number(res.headers.get("x-ratelimit-reset")) || 0;
+      const err = new Error("GitHub rate limit reached — try again shortly.");
+      err.status = res.status;
+      err.resetAt = reset ? reset * 1000 : null;
+      throw err;
+    }
+    if (!res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch { /* ignore */ }
+      const detail = data?.message || `${res.status} ${res.statusText}`;
+      const err = new Error(`GitHub: ${detail}`);
+      err.status = res.status;
+      throw err;
+    }
+    // .raw accept yields the file body directly; if the API returned JSON
+    // (e.g. when the path is a dir), fall through to next candidate.
+    const ctype = res.headers.get("content-type") || "";
+    let text;
+    if (ctype.includes("application/json")) {
+      const data = await res.json().catch(() => null);
+      if (data && typeof data.content === "string" && data.encoding === "base64") {
+        try { text = atob(data.content.replace(/\s+/g, "")); } catch { text = ""; }
+      } else if (Array.isArray(data)) {
+        continue;
+      } else {
+        text = "";
+      }
+    } else {
+      text = await res.text();
+    }
+    if (!text) continue;
+    return { path, text };
+  }
+  if (lastStatus === 404) {
+    return { path: "", text: "", missing: true };
+  }
+  return { path: "", text: "", missing: true };
+}
+
+async function __qtiReadCodeownersCache() {
+  try {
+    const o = await chrome.storage.local.get(CODEOWNERS_CACHE_KEY);
+    const c = o[CODEOWNERS_CACHE_KEY];
+    return c && typeof c === "object" ? c : {};
+  } catch { return {}; }
+}
+
+async function __qtiWriteCodeownersCache(cache) {
+  // Cap the cache to the 10 most recently used repos.
+  const entries = Object.entries(cache)
+    .filter(([, v]) => v && typeof v === "object")
+    .sort((a, b) => (b[1].fetchedAt || 0) - (a[1].fetchedAt || 0))
+    .slice(0, 10);
+  const trimmed = Object.fromEntries(entries);
+  try { await chrome.storage.local.set({ [CODEOWNERS_CACHE_KEY]: trimmed }); } catch { /* ignore */ }
+}
+
+on("getCodeowners", async (msg) => {
+  const repo = String(msg?.repo || "").trim();
+  const force = msg?.force === true;
+  if (!REPO_RE.test(repo)) return { ok: false, reason: "invalid-repo", owners: [], catchAll: [] };
+  const cache = await __qtiReadCodeownersCache();
+  const key = repo.toLowerCase();
+  const cached = cache[key];
+  const now = Date.now();
+  if (!force && cached && (now - (cached.fetchedAt || 0)) < CODEOWNERS_CACHE_TTL_MS) {
+    return { ok: true, cached: true, ...cached, repo };
+  }
+  let fetched;
+  try {
+    fetched = await __qtiFetchCodeownersFromRepo(repo);
+  } catch (err) {
+    // Fall back to stale cache if we have one — better than nothing.
+    if (cached) return { ok: true, stale: true, error: String(err?.message || err), ...cached, repo };
+    throw err;
+  }
+  const parsed = __qtiParseCodeowners(fetched.text || "");
+  const record = {
+    fetchedAt: now,
+    path: fetched.path || "",
+    missing: !!fetched.missing,
+    catchAll: parsed.catchAll,
+    owners: parsed.owners,
+    rules: parsed.rules.slice(0, 50),
+  };
+  cache[key] = record;
+  await __qtiWriteCodeownersCache(cache);
+  return { ok: true, cached: false, ...record, repo };
+});
+
 // payload: { repo: "owner/name", title, body, labels?: string[], milestone?: number }
 // submitIssue — POST a GitHub issue using the stored PAT.
 on("submitIssue", async (msg) => {

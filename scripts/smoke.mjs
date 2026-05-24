@@ -1058,3 +1058,81 @@ for (const needle of ["detectSelectionLanguage", "mergeLanguageLabel", "language
   if (!popupJsLang.includes(needle)) { console.error("popup.js missing language token:", needle); process.exit(1); }
 }
 console.log("\u2713 language-label smoke ok");
+
+// --- CODEOWNERS auto-mention --------------------------------------------
+const { parseCodeowners, buildCodeownersMentionLine } = globalThis.__qti;
+if (typeof parseCodeowners !== "function") { console.error("parseCodeowners missing"); process.exit(1); }
+if (typeof buildCodeownersMentionLine !== "function") { console.error("buildCodeownersMentionLine missing"); process.exit(1); }
+const coEmpty = parseCodeowners("");
+if (coEmpty.owners.length !== 0 || coEmpty.catchAll.length !== 0) { console.error("parseCodeowners empty"); process.exit(1); }
+const coBasic = parseCodeowners("# header\n*  @octocat @MOJOMBO\n/docs @docs-team @octocat\n");
+if (coBasic.catchAll.join("|") !== "octocat|MOJOMBO") { console.error("parseCodeowners catchAll wrong:", coBasic); process.exit(1); }
+if (!coBasic.owners.includes("octocat") || !coBasic.owners.includes("docs-team") || !coBasic.owners.includes("MOJOMBO")) { console.error("parseCodeowners owners wrong:", coBasic); process.exit(1); }
+// dedupe owners (case-insensitive, first-wins)
+if (coBasic.owners.filter((o) => o.toLowerCase() === "octocat").length !== 1) { console.error("parseCodeowners dedupe failed"); process.exit(1); }
+// last catch-all wins
+const coCa = parseCodeowners("* @a\n* @b @c\n");
+if (coCa.catchAll.join("|") !== "b|c") { console.error("parseCodeowners last-catchAll-wins:", coCa); process.exit(1); }
+// Invalid handles dropped
+const coBad = parseCodeowners("* not-a-handle @ok-user  @bad!handle\n");
+if (coBad.catchAll.join("|") !== "ok-user") { console.error("parseCodeowners bad-handles:", coBad); process.exit(1); }
+// Comments stripped
+const coCmt = parseCodeowners("* @ok # trailing comment\n# whole line\n  \n");
+if (coCmt.catchAll.join("|") !== "ok") { console.error("parseCodeowners comments:", coCmt); process.exit(1); }
+// Team handles (owner/team) accepted
+const coTeam = parseCodeowners("* @vercel/next-team @octocat\n");
+if (!coTeam.catchAll.includes("vercel/next-team")) { console.error("parseCodeowners team handle:", coTeam); process.exit(1); }
+// Glob variants count as catch-all
+for (const pat of ["**", "/*", "/**"]) {
+  const c = parseCodeowners(`${pat} @x\n`);
+  if (c.catchAll.join("|") !== "x") { console.error("parseCodeowners glob variant:", pat, c); process.exit(1); }
+}
+// buildCodeownersMentionLine
+if (buildCodeownersMentionLine([]) !== "") { console.error("mention empty"); process.exit(1); }
+if (buildCodeownersMentionLine(null) !== "") { console.error("mention null"); process.exit(1); }
+const mline = buildCodeownersMentionLine(["octocat", "@MOJOMBO", "octocat", "bad!", "defunkt"]);
+if (mline !== "cc @octocat @MOJOMBO @defunkt") { console.error("buildCodeownersMentionLine basic:", mline); process.exit(1); }
+// Cap at 10 mentions
+const manyMentions = buildCodeownersMentionLine(Array.from({ length: 20 }, (_, i) => `user${i}`));
+if ((manyMentions.match(/@/g) || []).length !== 10) { console.error("buildCodeownersMentionLine cap:", manyMentions); process.exit(1); }
+// Capture settings round-trip
+if (DEFAULT_CAPTURE_SETTINGS.codeownersEnabled !== true) { console.error("DEFAULT_CAPTURE_SETTINGS.codeownersEnabled default true"); process.exit(1); }
+if (normalizeCaptureSettings({ codeownersEnabled: false }).codeownersEnabled !== false) { console.error("codeownersEnabled false round-trip"); process.exit(1); }
+if (normalizeCaptureSettings({ codeownersEnabled: "yes" }).codeownersEnabled !== true) { console.error("codeownersEnabled non-bool keeps default true"); process.exit(1); }
+// Background scaffolding
+const swCo = fs.readFileSync("src/background.js", "utf8");
+for (const needle of [
+  "__qtiParseCodeowners",
+  "__qtiFetchCodeownersFromRepo",
+  "getCodeowners",
+  "CODEOWNERS_PATHS",
+  "CODEOWNERS_CACHE_KEY",
+  ".github/CODEOWNERS",
+  "application/vnd.github.raw",
+]) {
+  if (!swCo.includes(needle)) { console.error("background.js missing CODEOWNERS token:", needle); process.exit(1); }
+}
+// Popup HTML / CSS scaffolding
+const popupHtmlCo = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of [
+  "data-codeowners-row",
+  'data-action="toggle-codeowners"',
+  'data-action="refresh-codeowners"',
+  'data-field="codeowners-status"',
+  'data-field="codeowners-chips"',
+  'data-field="codeowners-count"',
+  'data-field="codeowners-toggle-label"',
+  'data-field="codeowners-knob"',
+  "CODEOWNERS",
+]) {
+  if (!popupHtmlCo.includes(needle)) { console.error("popup.html missing CODEOWNERS token:", needle); process.exit(1); }
+}
+const popupCssCo = fs.readFileSync("src/popup.css", "utf8");
+for (const needle of [".codeowners-row", ".codeowners-status", ".codeowners-chip", ".codeowners-chips", ".codeowners-count", ".codeowners-refresh"]) {
+  if (!popupCssCo.includes(needle)) { console.error("popup.css missing CODEOWNERS token:", needle); process.exit(1); }
+}
+const popupJsCo = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["parseCodeowners", "buildCodeownersMentionLine", "runCodeownersFetch", "selectedCodeownersMentions", "getCodeowners", "codeownersEnabled"]) {
+  if (!popupJsCo.includes(needle)) { console.error("popup.js missing CODEOWNERS token:", needle); process.exit(1); }
+}
+console.log("\u2713 codeowners smoke ok");

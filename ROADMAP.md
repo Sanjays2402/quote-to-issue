@@ -40,7 +40,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Selection language detection + auto-tag issue with language label
 - [x] Slash-command palette in popup (Cmd+K) for repo/label/template actions
 - [x] Convert selection to task-list checkboxes when bullet patterns detected
-- [ ] Auto-mention reviewers based on CODEOWNERS file fetched from repo
+- [x] Auto-mention reviewers based on CODEOWNERS file fetched from repo
 - [ ] Inline image paste support: drop screenshots/images into body editor
 - [ ] Per-repo issue limits and rate-limit awareness with backoff indicator
 - [ ] Quote stacking: append additional selections to an open draft

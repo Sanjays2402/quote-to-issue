@@ -83,7 +83,7 @@ function rankDuplicates(items, tokens) {
 // ---------------------------------------------------------------------------
 const CONTEXT_RADIUS_MIN = 0;
 const CONTEXT_RADIUS_MAX = 600;
-const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false, privacyMode: false, languageLabelEnabled: true });
+const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false, privacyMode: false, languageLabelEnabled: true, codeownersEnabled: true });
 
 function normalizeCaptureSettings(raw) {
   const out = { ...DEFAULT_CAPTURE_SETTINGS };
@@ -97,7 +97,61 @@ function normalizeCaptureSettings(raw) {
   if (typeof raw.highlightMode === "boolean") out.highlightMode = raw.highlightMode;
   if (typeof raw.privacyMode === "boolean") out.privacyMode = raw.privacyMode;
   if (typeof raw.languageLabelEnabled === "boolean") out.languageLabelEnabled = raw.languageLabelEnabled;
+  if (typeof raw.codeownersEnabled === "boolean") out.codeownersEnabled = raw.codeownersEnabled;
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// CODEOWNERS — parse the file and pick reviewers to auto-mention. The full
+// CODEOWNERS spec is glob-based per path; since issues are not file-scoped,
+// we surface the catch-all owners (`*` / `**`) by default and let the user
+// toggle individual handles.
+// ---------------------------------------------------------------------------
+const CODEOWNERS_HANDLE_RE = /^@[A-Za-z0-9][A-Za-z0-9._\-\/]*$/;
+const CODEOWNERS_BARE_HANDLE_RE = /^[A-Za-z0-9][A-Za-z0-9._\-\/]*$/;
+function parseCodeowners(text) {
+  const out = { catchAll: [], rules: [], owners: [] };
+  if (!text || typeof text !== "string") return out;
+  const seen = new Set();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/#.*$/, "").trim();
+    if (!line) continue;
+    const parts = line.split(/\s+/);
+    if (parts.length < 2) continue;
+    const pattern = parts[0];
+    const owners = parts.slice(1)
+      .map((o) => o.trim())
+      .filter((o) => CODEOWNERS_HANDLE_RE.test(o))
+      .map((o) => o.replace(/^@+/, ""))
+      .filter(Boolean);
+    if (owners.length === 0) continue;
+    for (const o of owners) { if (!seen.has(o.toLowerCase())) { seen.add(o.toLowerCase()); out.owners.push(o); } }
+    if (pattern === "*" || pattern === "**" || pattern === "/*" || pattern === "/**") {
+      // Last catch-all wins (matches GitHub's behavior).
+      const ca = [];
+      const caSeen = new Set();
+      for (const o of owners) { if (!caSeen.has(o.toLowerCase())) { caSeen.add(o.toLowerCase()); ca.push(o); } }
+      out.catchAll = ca;
+    }
+    out.rules.push({ pattern, owners });
+  }
+  return out;
+}
+function buildCodeownersMentionLine(handles) {
+  const clean = (Array.isArray(handles) ? handles : [])
+    .map((h) => String(h || "").trim().replace(/^@+/, ""))
+    .filter((h) => CODEOWNERS_BARE_HANDLE_RE.test(h));
+  const seen = new Set();
+  const out = [];
+  for (const h of clean) {
+    const k = h.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(`@${h}`);
+    if (out.length >= 10) break;
+  }
+  if (out.length === 0) return "";
+  return `cc ${out.join(" ")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1637,6 +1691,7 @@ if (typeof globalThis !== "undefined") {
     PRIVACY_AUTH_PARAM_RE, PRIVACY_TRACKING_PARAM_RE,
     detectSelectionLanguage, languageLabelFor, mergeLanguageLabel,
     LANGUAGE_LABEL_PREFIX, LANG_KNOWN_CODES,
+    parseCodeowners, buildCodeownersMentionLine,
   };
 }
 
@@ -2256,9 +2311,14 @@ function buildFormNode(q, state) {
   if (previewRendered) previewRendered.innerHTML = renderMarkdownPreview(buildMarkdownBody(q));
 
   function effectiveBody() {
-    return activeTemplate && activeTemplate.body
+    const base = activeTemplate && activeTemplate.body
       ? renderTemplate(activeTemplate.body, q)
       : buildMarkdownBody(q);
+    const mention = (typeof selectedCodeownersMentions === "function")
+      ? selectedCodeownersMentions() : "";
+    if (!mention) return base;
+    const trimmed = base.replace(/\s+$/, "");
+    return trimmed ? `${trimmed}\n\n${mention}\n` : `${mention}\n`;
   }
 
   function refreshPreviewIfOpen() {
@@ -3150,6 +3210,167 @@ function buildFormNode(q, state) {
   dupRefreshBtn?.addEventListener("click", () => runDupSearch({ force: true }).catch(() => {}));
   // Initial search if the form already has enough info (e.g. loaded draft).
   setTimeout(() => runDupSearch().catch(() => {}), 250);
+
+  // -------------------------------------------------------------------------
+  // CODEOWNERS auto-mention
+  // -------------------------------------------------------------------------
+  const coRow = node.querySelector("[data-codeowners-row]");
+  const coStatus = node.querySelector('[data-field="codeowners-status"]');
+  const coChips = node.querySelector('[data-field="codeowners-chips"]');
+  const coCount = node.querySelector('[data-field="codeowners-count"]');
+  const coToggle = node.querySelector('[data-action="toggle-codeowners"]');
+  const coToggleLabel = node.querySelector('[data-field="codeowners-toggle-label"]');
+  const coRefresh = node.querySelector('[data-action="refresh-codeowners"]');
+  let coSeq = 0;
+  let coLastRepo = "";
+  let coOwners = [];          // current parsed owners (catch-all preferred, else all)
+  let coSelected = new Set(); // lowercased handles to include in body
+  let coEnabled = true;       // mirrors captureSettings.codeownersEnabled
+
+  function setCoStatus(text, state) {
+    if (!coStatus) return;
+    coStatus.textContent = text;
+    coStatus.setAttribute("data-state", state || "idle");
+  }
+  function setCoCount(n) {
+    if (!coCount) return;
+    if (n > 0) { coCount.textContent = String(n); coCount.hidden = false; }
+    else { coCount.textContent = ""; coCount.hidden = true; }
+  }
+  function showCoRow(show) {
+    if (coRow) coRow.hidden = !show;
+  }
+  function renderCoChips() {
+    if (!coChips) return;
+    coChips.replaceChildren();
+    if (!coEnabled || coOwners.length === 0) { coChips.hidden = true; return; }
+    coChips.hidden = false;
+    for (const handle of coOwners.slice(0, 20)) {
+      const k = handle.toLowerCase();
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "codeowners-chip";
+      chip.setAttribute("aria-pressed", coSelected.has(k) ? "true" : "false");
+      chip.title = coSelected.has(k) ? `@${handle} will be mentioned in the issue body` : `Click to include @${handle}`;
+      chip.textContent = `@${handle}`;
+      chip.addEventListener("click", () => {
+        if (coSelected.has(k)) coSelected.delete(k); else coSelected.add(k);
+        chip.setAttribute("aria-pressed", coSelected.has(k) ? "true" : "false");
+        chip.title = coSelected.has(k) ? `@${handle} will be mentioned in the issue body` : `Click to include @${handle}`;
+        refreshPreviewIfOpen();
+      });
+      coChips.appendChild(chip);
+    }
+  }
+  function applyCoData(record) {
+    const all = Array.isArray(record?.owners) ? record.owners : [];
+    const catchAll = Array.isArray(record?.catchAll) ? record.catchAll : [];
+    // Prefer catch-all owners as the suggestion set; fall back to all owners.
+    coOwners = (catchAll.length ? catchAll : all).slice(0, 20);
+    // Pre-select catch-all by default since those are the repo-wide reviewers.
+    coSelected = new Set((catchAll.length ? catchAll : []).map((h) => h.toLowerCase()));
+    setCoCount(coOwners.length);
+    renderCoChips();
+  }
+  function selectedCodeownersMentions() {
+    if (!coEnabled || coOwners.length === 0) return "";
+    const ordered = coOwners.filter((h) => coSelected.has(h.toLowerCase()));
+    return buildCodeownersMentionLine(ordered);
+  }
+
+  async function runCodeownersFetch({ force = false } = {}) {
+    if (!coRow) return;
+    const repo = parseRepo(repoInput.value);
+    if (!repo.ok) {
+      showCoRow(false);
+      coOwners = [];
+      coSelected.clear();
+      setCoCount(0);
+      coLastRepo = "";
+      refreshPreviewIfOpen();
+      return;
+    }
+    if (!force && repo.value === coLastRepo) return;
+    coLastRepo = repo.value;
+    showCoRow(true);
+    const mySeq = ++coSeq;
+    coRefresh?.classList.add("loading");
+    setCoStatus("Fetching CODEOWNERS…", "idle");
+    try {
+      const reply = await chrome.runtime.sendMessage({ type: "getCodeowners", repo: repo.value, force });
+      if (mySeq !== coSeq) return;
+      if (!reply?.ok) {
+        const err = reply?.error || reply?.reason || "Unknown error";
+        setCoStatus(`CODEOWNERS error: ${err}`, "err");
+        coOwners = []; coSelected.clear(); setCoCount(0); renderCoChips();
+        refreshPreviewIfOpen();
+        return;
+      }
+      const record = reply.result || {};
+      if (record.missing) {
+        setCoStatus("No CODEOWNERS file in this repo.", "idle");
+        coOwners = []; coSelected.clear(); setCoCount(0); renderCoChips();
+        refreshPreviewIfOpen();
+        return;
+      }
+      applyCoData(record);
+      const stale = record.stale ? " (cached — refresh failed)" : record.cached ? " (cached)" : "";
+      const caN = (record.catchAll || []).length;
+      const total = (record.owners || []).length;
+      if (total === 0) {
+        setCoStatus(`Found CODEOWNERS at ${record.path || "repo"} but no owners parsed.${stale}`, "warn");
+      } else if (caN > 0) {
+        const label = caN === 1 ? "1 catch-all owner" : `${caN} catch-all owners`;
+        setCoStatus(`${label} — will @-mention in issue body.${stale}`, "ok");
+      } else {
+        setCoStatus(`${total} owners found — click a chip to @-mention.${stale}`, "ok");
+      }
+      refreshPreviewIfOpen();
+    } catch (err) {
+      if (mySeq !== coSeq) return;
+      setCoStatus(String(err?.message || err), "err");
+      coOwners = []; coSelected.clear(); setCoCount(0); renderCoChips();
+      refreshPreviewIfOpen();
+    } finally {
+      if (mySeq === coSeq) coRefresh?.classList.remove("loading");
+    }
+  }
+
+  let coDebounce = null;
+  function scheduleCodeownersFetch() {
+    if (coDebounce) clearTimeout(coDebounce);
+    coDebounce = setTimeout(() => runCodeownersFetch().catch(() => {}), 600);
+  }
+  repoInput.addEventListener("input", scheduleCodeownersFetch);
+  coRefresh?.addEventListener("click", () => runCodeownersFetch({ force: true }).catch(() => {}));
+  if (coToggle) {
+    coToggle.addEventListener("click", async () => {
+      const next = coToggle.getAttribute("aria-pressed") !== "true";
+      coToggle.setAttribute("aria-pressed", String(next));
+      if (coToggleLabel) coToggleLabel.textContent = next ? "On" : "Off";
+      const knob = coToggle.querySelector('[data-field="codeowners-knob"]');
+      if (knob) knob.setAttribute("cx", next ? "15" : "9");
+      coEnabled = next;
+      renderCoChips();
+      try { await setCaptureSettings({ codeownersEnabled: next }); } catch { /* ignore */ }
+      refreshPreviewIfOpen();
+    });
+  }
+  // Mirror the persisted setting + kick off the first fetch.
+  getCaptureSettings()
+    .then((s) => {
+      coEnabled = s.codeownersEnabled !== false;
+      if (coToggle) {
+        coToggle.setAttribute("aria-pressed", String(coEnabled));
+        const knob = coToggle.querySelector('[data-field="codeowners-knob"]');
+        if (knob) knob.setAttribute("cx", coEnabled ? "15" : "9");
+      }
+      if (coToggleLabel) coToggleLabel.textContent = coEnabled ? "On" : "Off";
+      renderCoChips();
+      setTimeout(() => runCodeownersFetch().catch(() => {}), 250);
+    })
+    .catch(() => {});
+
 
   // Kick off the recents fetch — reveals the toggle and primes the dropdown.
   refreshRecents();
