@@ -366,11 +366,152 @@ oauthCancelBtn?.addEventListener("click", () => {
   resetOauthUi();
 });
 
+// --- Export quote history (JSON / CSV) ----------------------------------
+const QUOTE_HISTORY_KEY = "qti.quoteHistory";
+const exportStatus = document.querySelector('[data-field="export-status"]');
+const exportStatusText = document.querySelector('[data-field="export-status-text"]');
+const exportSummary = document.querySelector('[data-field="export-summary"]');
+const exportEmpty = document.querySelector('[data-field="export-empty"]');
+const exportCountEl = document.querySelector('[data-field="export-count"]');
+const exportRepoCountEl = document.querySelector('[data-field="export-repo-count"]');
+const exportLatestEl = document.querySelector('[data-field="export-latest"]');
+const exportHint = document.querySelector('[data-field="export-hint"]');
+const exportJsonBtn = document.querySelector('[data-action="export-json"]');
+const exportCsvBtn = document.querySelector('[data-action="export-csv"]');
+
+function escapeCsv(value) {
+  if (value == null) return "";
+  const s = String(value);
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function historyToCsv(rows) {
+  const cols = ["filedAt", "repo", "number", "title", "selectionText", "pageTitle", "pageUrl", "htmlUrl", "id"];
+  const out = [cols.join(",")];
+  for (const r of rows) {
+    out.push(cols.map((c) => escapeCsv(r?.[c] ?? "")).join(","));
+  }
+  return out.join("\r\n");
+}
+
+function historyToJson(rows) {
+  return JSON.stringify({
+    schema: "quote-to-issue/quote-history",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    count: rows.length,
+    quotes: rows,
+  }, null, 2);
+}
+
+function triggerDownload(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+async function loadQuoteHistory() {
+  try {
+    const out = await chrome?.storage?.local?.get?.(QUOTE_HISTORY_KEY);
+    const raw = out?.[QUOTE_HISTORY_KEY];
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((x) => x && typeof x === "object");
+  } catch {
+    return [];
+  }
+}
+
+function setExportHint(message, tone) {
+  if (!exportHint) return;
+  exportHint.textContent = message || "";
+  exportHint.classList.remove("error", "ok");
+  if (tone === "error") exportHint.classList.add("error");
+  else if (tone === "ok") exportHint.classList.add("ok");
+}
+
+async function refreshExportPanel() {
+  const rows = await loadQuoteHistory();
+  const count = rows.length;
+  const repos = new Set(rows.map((r) => String(r.repo || "").trim()).filter(Boolean));
+  if (count === 0) {
+    exportStatus.dataset.state = "empty";
+    exportStatusText.textContent = "No quotes yet";
+    exportSummary.hidden = true;
+    exportEmpty.style.display = "";
+    exportJsonBtn.disabled = true;
+    exportCsvBtn.disabled = true;
+    return;
+  }
+  exportStatus.dataset.state = "saved";
+  exportStatusText.textContent = `${count} quote${count === 1 ? "" : "s"} ready`;
+  exportSummary.hidden = false;
+  exportEmpty.style.display = "none";
+  exportCountEl.textContent = String(count);
+  exportRepoCountEl.textContent = String(repos.size);
+  const latest = rows
+    .map((r) => Date.parse(r.filedAt) || 0)
+    .reduce((m, v) => (v > m ? v : m), 0);
+  exportLatestEl.textContent = latest ? fmtRelative(new Date(latest).toISOString()) : "—";
+  exportJsonBtn.disabled = false;
+  exportCsvBtn.disabled = false;
+}
+
+function stamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+exportJsonBtn?.addEventListener("click", async () => {
+  exportJsonBtn.disabled = true;
+  try {
+    const rows = await loadQuoteHistory();
+    if (!rows.length) throw new Error("No quotes to export");
+    triggerDownload(historyToJson(rows), `quote-to-issue-${stamp()}.json`, "application/json");
+    setExportHint(`Exported ${rows.length} quote${rows.length === 1 ? "" : "s"} as JSON.`, "ok");
+  } catch (err) {
+    setExportHint(`Export failed: ${err?.message || err}`, "error");
+  } finally {
+    await refreshExportPanel();
+  }
+});
+
+exportCsvBtn?.addEventListener("click", async () => {
+  exportCsvBtn.disabled = true;
+  try {
+    const rows = await loadQuoteHistory();
+    if (!rows.length) throw new Error("No quotes to export");
+    triggerDownload(historyToCsv(rows), `quote-to-issue-${stamp()}.csv`, "text/csv;charset=utf-8");
+    setExportHint(`Exported ${rows.length} quote${rows.length === 1 ? "" : "s"} as CSV.`, "ok");
+  } catch (err) {
+    setExportHint(`Export failed: ${err?.message || err}`, "error");
+  } finally {
+    await refreshExportPanel();
+  }
+});
+
+try {
+  chrome?.storage?.onChanged?.addListener?.((changes, area) => {
+    if (area === "local" && QUOTE_HISTORY_KEY in (changes || {})) {
+      refreshExportPanel().catch(() => {});
+    }
+  });
+} catch {}
+
 // --- Boot ----------------------------------------------------------------
 (async function boot() {
   await initTheme();
   await refreshTokenStatus();
   await refreshRotations();
   await loadStoredClientId();
+  await refreshExportPanel();
   tokenInput.focus?.();
 })();

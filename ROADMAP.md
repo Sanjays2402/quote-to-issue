@@ -46,4 +46,4 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Quote stacking: append additional selections to an open draft
 - [x] Issue comment mode: post selection as comment on an existing issue/PR by URL
 - [x] Smart label inference from selection keywords (regex + token match rules)
-- [ ] Export quote history as JSON/CSV from settings page
+- [x] Export quote history as JSON/CSV from settings page
