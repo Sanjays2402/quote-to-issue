@@ -234,6 +234,64 @@
       <p class="export-hint" data-field="export-hint" aria-live="polite"></p>
     </section>
 
+    <section class="options-card glass" aria-labelledby="opt-prefix-h" data-prefix-card>
+      <header class="options-card-head">
+        <div class="quote-meta">
+          <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 6h6"></path><path d="M4 12h10"></path><path d="M4 18h12"></path>
+            <path d="M18 6l2 2-2 2"></path>
+          </svg>
+          <h2 id="opt-prefix-h" class="options-card-title">Per-repo title prefix</h2>
+        </div>
+        <div class="token-status" data-field="prefix-status" data-state="empty">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-text" data-field="prefix-status-text">No prefixes saved</span>
+        </div>
+      </header>
+      <p class="settings-blurb">Stamp every issue title for a repo with a short tag — e.g. <code>[bug]</code>, <code>[feedback]</code>, <code>(qa)</code>. The popup prepends it automatically; you can still edit the title before filing.</p>
+
+      <div class="prefix-add">
+        <div class="field prefix-add-field">
+          <label class="field-label" for="opt-prefix-repo">Repo</label>
+          <div class="input-wrap">
+            <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M6 3h9l5 5v13H6z"></path><path d="M14 3v6h6"></path>
+            </svg>
+            <input id="opt-prefix-repo" class="input" type="text" placeholder="owner/name" autocomplete="off" spellcheck="false" data-field="prefix-repo">
+          </div>
+        </div>
+        <div class="field prefix-add-field">
+          <label class="field-label" for="opt-prefix-value">Prefix</label>
+          <div class="input-wrap">
+            <svg viewBox="0 0 24 24" class="input-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 7h14"></path><path d="M5 12h14"></path><path d="M5 17h9"></path>
+            </svg>
+            <input id="opt-prefix-value" class="input" type="text" placeholder="[bug]" autocomplete="off" spellcheck="false" maxlength="24" data-field="prefix-value">
+          </div>
+        </div>
+        <div class="prefix-add-actions">
+          <button class="btn primary" type="button" data-action="save-prefix" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 4h11l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"></path>
+              <path d="M8 4v5h8"></path>
+            </svg>
+            <span>Save prefix</span>
+          </button>
+        </div>
+        <p class="field-hint" data-field="prefix-hint">Up to 24 characters. Leave the field empty and Save to remove the prefix for that repo.</p>
+      </div>
+
+      <div class="prefix-list" data-prefix-list></div>
+      <div class="prefix-empty" data-prefix-empty>
+        <svg viewBox="0 0 160 90" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="32" y="32" width="96" height="26" rx="6"></rect>
+          <path d="M44 45h20"></path>
+          <path d="M72 45h44"></path>
+        </svg>
+        <p>No prefixes saved yet. Add one above to stamp every new issue title for that repo.</p>
+      </div>
+    </section>
+
     <footer class="options-foot">
       <span class="version">Quote to Issue · v0.1.0</span>
     </footer>

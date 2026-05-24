@@ -935,6 +935,31 @@ async function clearRepoTemplate(repo) {
 // Per-repo default labels + assignees
 // ---------------------------------------------------------------------------
 
+// Title prefix is a short stamp prepended to every issue title for a given
+// repo (e.g. "[bug] ", "[feedback] "). Kept tight so the title stays
+// readable even after the prefix.
+const MAX_TITLE_PREFIX_LEN = 24;
+
+function sanitizeTitlePrefix(raw) {
+  const s = String(raw == null ? "" : raw).replace(/[\r\n\t]+/g, " ").trim();
+  if (!s) return "";
+  // Collapse runs of whitespace; cap length.
+  return s.replace(/\s{2,}/g, " ").slice(0, MAX_TITLE_PREFIX_LEN);
+}
+
+function applyTitlePrefix(title, prefix) {
+  const t = String(title || "");
+  const p = sanitizeTitlePrefix(prefix);
+  if (!p) return t;
+  // Match prefix already at the head, with optional trailing whitespace, so we
+  // don't double-prefix when the user re-applies defaults or types over them.
+  const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^\\s*${escaped}\\s*`);
+  if (re.test(t)) return t.replace(re, `${p} `).trimEnd();
+  if (!t.trim()) return `${p} `;
+  return `${p} ${t.replace(/^\s+/, "")}`;
+}
+
 function normalizeRepoDefaults(raw) {
   if (!raw || typeof raw !== "object") return {};
   const out = {};
@@ -946,9 +971,12 @@ function normalizeRepoDefaults(raw) {
     const assigneesIn = Array.isArray(v.assignees) ? v.assignees.join(",") : v.assignees;
     const labels = parseLabels(labelsIn);
     const assignees = parseAssignees(assigneesIn);
-    if (labels.length === 0 && assignees.length === 0) continue;
+    const titlePrefix = sanitizeTitlePrefix(v.titlePrefix);
+    if (labels.length === 0 && assignees.length === 0 && !titlePrefix) continue;
     const updatedAt = typeof v.updatedAt === "string" ? v.updatedAt : new Date().toISOString();
-    out[key] = { labels, assignees, updatedAt };
+    const entry = { labels, assignees, updatedAt };
+    if (titlePrefix) entry.titlePrefix = titlePrefix;
+    out[key] = entry;
   }
   return out;
 }
@@ -966,20 +994,29 @@ async function getRepoDefaults(repo) {
   return all[key] || null;
 }
 
-async function setRepoDefaults(repo, { labels, assignees }) {
+async function setRepoDefaults(repo, { labels, assignees, titlePrefix } = {}) {
   const key = repoKey(repo);
   if (!key) throw new Error("Invalid repo");
   const labs = parseLabels(Array.isArray(labels) ? labels.join(",") : labels);
   const asgs = parseAssignees(Array.isArray(assignees) ? assignees.join(",") : assignees);
+  // When titlePrefix is omitted (undefined), preserve any existing value so
+  // saving labels/assignees from the popup doesn't wipe a prefix set on the
+  // settings page. Pass an explicit "" to clear it.
   const all = await getAllRepoDefaults();
-  if (labs.length === 0 && asgs.length === 0) {
+  const prior = all[key] || {};
+  const prefix = (typeof titlePrefix === "undefined")
+    ? (prior.titlePrefix || "")
+    : sanitizeTitlePrefix(titlePrefix);
+  if (labs.length === 0 && asgs.length === 0 && !prefix) {
     if (all[key]) {
       delete all[key];
       await chrome.storage.local.set({ [STORAGE_KEYS.repoDefaults]: all });
     }
     return null;
   }
-  all[key] = { labels: labs, assignees: asgs, updatedAt: new Date().toISOString() };
+  const entry = { labels: labs, assignees: asgs, updatedAt: new Date().toISOString() };
+  if (prefix) entry.titlePrefix = prefix;
+  all[key] = entry;
   await chrome.storage.local.set({ [STORAGE_KEYS.repoDefaults]: all });
   return all[key];
 }
@@ -1877,7 +1914,7 @@ if (typeof globalThis !== "undefined") {
     parseRepo, parseLabels, parseAssignees, parseIssueOrPrUrl, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, detectTaskListLines, BULLET_LINE_RE, buildSourceUrlWithAnchor, deriveScreenshotFilename,
     formatBytes, formatPublishDate, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
-    normalizeRepoDefaults,
+    normalizeRepoDefaults, sanitizeTitlePrefix, applyTitlePrefix, MAX_TITLE_PREFIX_LEN,
     normalizeDrafts, MAX_DRAFTS, MAX_DRAFT_STACK, appendQuoteToDraft, stackFingerprint,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
     normalizeRecentIssues, MAX_RECENT_ISSUES,
@@ -2881,7 +2918,7 @@ function buildFormNode(q, state) {
     });
   }
 
-  // --- Per-repo defaults (labels + assignees) -----------------------------
+  // --- Per-repo defaults (labels + assignees + title prefix) -------------
   function applyDefaults(d) {
     if (!d) return;
     if (Array.isArray(d.labels) && d.labels.length) {
@@ -2891,6 +2928,14 @@ function buildFormNode(q, state) {
     if (assigneesInput && Array.isArray(d.assignees) && d.assignees.length) {
       assigneesInput.value = d.assignees.join(", ");
       assigneesInput.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    if (d.titlePrefix && titleInput) {
+      const before = titleInput.value;
+      const after = applyTitlePrefix(before, d.titlePrefix);
+      if (after !== before) {
+        titleInput.value = after;
+        titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     }
   }
   function refreshDefaultsStatus() {

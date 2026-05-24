@@ -48,7 +48,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Smart label inference from selection keywords (regex + token match rules)
 - [x] Export quote history as JSON/CSV from settings page
 - [x] Quote pinning: pin frequently-used quotes to top of history panel
-- [ ] Per-repo issue title prefix (e.g. '[bug]', '[feedback]') configurable in settings
+- [x] Per-repo issue title prefix (e.g. '[bug]', '[feedback]') configurable in settings
 - [ ] Markdown table builder: convert tabular selections to GitHub-flavored markdown tables
 - [ ] Selection sentiment hint: tag positive/negative/neutral feedback automatically
 - [ ] Issue attachment uploads via GitHub user-content (drag-drop files into body)

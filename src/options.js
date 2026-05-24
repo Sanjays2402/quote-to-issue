@@ -506,6 +506,184 @@ try {
   });
 } catch {}
 
+// --- Per-repo title prefix manager --------------------------------------
+const REPO_DEFAULTS_KEY = "qti.repoDefaults";
+const MAX_TITLE_PREFIX_LEN = 24;
+const PREFIX_REPO_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}$/;
+const prefixRepoInput = document.querySelector('[data-field="prefix-repo"]');
+const prefixValueInput = document.querySelector('[data-field="prefix-value"]');
+const prefixSaveBtn = document.querySelector('[data-action="save-prefix"]');
+const prefixHint = document.querySelector('[data-field="prefix-hint"]');
+const prefixList = document.querySelector('[data-prefix-list]');
+const prefixEmpty = document.querySelector('[data-prefix-empty]');
+const prefixStatus = document.querySelector('[data-field="prefix-status"]');
+const prefixStatusText = document.querySelector('[data-field="prefix-status-text"]');
+
+function parsePrefixRepo(input) {
+  const v = String(input || "").trim().replace(/^https?:\/\/github\.com\//i, "").replace(/\.git$/i, "").replace(/\/+$/, "");
+  if (!v || !PREFIX_REPO_RE.test(v)) return "";
+  return v.toLowerCase();
+}
+function sanitizePrefix(raw) {
+  const s = String(raw == null ? "" : raw).replace(/[\r\n\t]+/g, " ").trim();
+  if (!s) return "";
+  return s.replace(/\s{2,}/g, " ").slice(0, MAX_TITLE_PREFIX_LEN);
+}
+async function getAllRepoDefaults() {
+  try {
+    const out = await chrome?.storage?.local?.get?.(REPO_DEFAULTS_KEY);
+    const raw = out?.[REPO_DEFAULTS_KEY];
+    if (!raw || typeof raw !== "object") return {};
+    return raw;
+  } catch { return {}; }
+}
+async function saveAllRepoDefaults(all) {
+  try { await chrome?.storage?.local?.set?.({ [REPO_DEFAULTS_KEY]: all }); } catch {}
+}
+async function upsertPrefix(repoKey, prefix) {
+  const all = await getAllRepoDefaults();
+  const prior = (all[repoKey] && typeof all[repoKey] === "object") ? all[repoKey] : {};
+  const next = {
+    labels: Array.isArray(prior.labels) ? prior.labels : [],
+    assignees: Array.isArray(prior.assignees) ? prior.assignees : [],
+    updatedAt: new Date().toISOString(),
+  };
+  if (prefix) next.titlePrefix = prefix;
+  if (!prefix && next.labels.length === 0 && next.assignees.length === 0) {
+    delete all[repoKey];
+  } else {
+    all[repoKey] = next;
+  }
+  await saveAllRepoDefaults(all);
+}
+async function deletePrefix(repoKey) {
+  const all = await getAllRepoDefaults();
+  const prior = all[repoKey];
+  if (!prior) return;
+  if (!Array.isArray(prior.labels) || prior.labels.length === 0) {
+    if (!Array.isArray(prior.assignees) || prior.assignees.length === 0) {
+      delete all[repoKey];
+      await saveAllRepoDefaults(all);
+      return;
+    }
+  }
+  const next = { ...prior };
+  delete next.titlePrefix;
+  next.updatedAt = new Date().toISOString();
+  all[repoKey] = next;
+  await saveAllRepoDefaults(all);
+}
+
+function setPrefixHint(message, tone) {
+  if (!prefixHint) return;
+  prefixHint.textContent = message || "Up to 24 characters. Leave the field empty and Save to remove the prefix for that repo.";
+  prefixHint.classList.remove("error", "ok");
+  if (tone === "error") prefixHint.classList.add("error");
+  else if (tone === "ok") prefixHint.classList.add("ok");
+}
+
+function updatePrefixSaveState() {
+  if (!prefixSaveBtn) return;
+  const repoOk = !!parsePrefixRepo(prefixRepoInput.value);
+  prefixSaveBtn.disabled = !repoOk;
+}
+
+async function refreshPrefixList() {
+  if (!prefixList) return;
+  const all = await getAllRepoDefaults();
+  const entries = Object.entries(all)
+    .map(([k, v]) => ({ repo: k, prefix: sanitizePrefix(v?.titlePrefix) }))
+    .filter((e) => parsePrefixRepo(e.repo) && e.prefix);
+  entries.sort((a, b) => a.repo.localeCompare(b.repo));
+  prefixList.replaceChildren();
+  if (entries.length === 0) {
+    prefixEmpty.style.display = "";
+    if (prefixStatus) {
+      prefixStatus.dataset.state = "empty";
+      prefixStatusText.textContent = "No prefixes saved";
+    }
+    return;
+  }
+  prefixEmpty.style.display = "none";
+  if (prefixStatus) {
+    prefixStatus.dataset.state = "saved";
+    prefixStatusText.textContent = `${entries.length} prefix${entries.length === 1 ? "" : "es"} saved`;
+  }
+  for (const entry of entries) {
+    const row = document.createElement("div");
+    row.className = "prefix-row";
+    const repo = document.createElement("span");
+    repo.className = "prefix-row-repo";
+    repo.textContent = entry.repo;
+    repo.title = entry.repo;
+    const tag = document.createElement("span");
+    tag.className = "prefix-row-tag";
+    tag.textContent = entry.prefix;
+    tag.title = entry.prefix;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "prefix-row-remove";
+    remove.title = `Remove prefix for ${entry.repo}`;
+    remove.setAttribute("aria-label", `Remove prefix for ${entry.repo}`);
+    remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12"></path><path d="M18 6L6 18"></path></svg>';
+    remove.addEventListener("click", async () => {
+      await deletePrefix(entry.repo);
+      setPrefixHint(`Removed prefix for ${entry.repo}.`, "ok");
+      await refreshPrefixList();
+    });
+    row.appendChild(repo);
+    row.appendChild(tag);
+    row.appendChild(remove);
+    prefixList.appendChild(row);
+  }
+}
+
+prefixRepoInput?.addEventListener("input", () => {
+  const v = prefixRepoInput.value.trim();
+  if (v && !parsePrefixRepo(v)) {
+    setPrefixHint("Use the form owner/name.", "error");
+  } else {
+    setPrefixHint("");
+  }
+  updatePrefixSaveState();
+});
+prefixValueInput?.addEventListener("input", () => {
+  // Live char-count nudge when nearing cap.
+  const len = sanitizePrefix(prefixValueInput.value).length;
+  if (len >= MAX_TITLE_PREFIX_LEN) {
+    setPrefixHint(`${len}/${MAX_TITLE_PREFIX_LEN} characters — max reached.`, "");
+  } else {
+    setPrefixHint("");
+  }
+});
+function submitPrefix() {
+  if (!prefixSaveBtn || prefixSaveBtn.disabled) return;
+  const repoKey = parsePrefixRepo(prefixRepoInput.value);
+  if (!repoKey) { setPrefixHint("Use the form owner/name.", "error"); return; }
+  const prefix = sanitizePrefix(prefixValueInput.value);
+  prefixSaveBtn.disabled = true;
+  upsertPrefix(repoKey, prefix)
+    .then(async () => {
+      if (prefix) setPrefixHint(`Saved prefix for ${repoKey}: ${prefix}`, "ok");
+      else setPrefixHint(`Removed prefix for ${repoKey}.`, "ok");
+      prefixValueInput.value = "";
+      await refreshPrefixList();
+    })
+    .catch((err) => setPrefixHint(`Save failed: ${err?.message || err}`, "error"))
+    .finally(updatePrefixSaveState);
+}
+prefixSaveBtn?.addEventListener("click", submitPrefix);
+prefixRepoInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); prefixValueInput?.focus?.(); }});
+prefixValueInput?.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submitPrefix(); }});
+
+try {
+  chrome?.storage?.onChanged?.addListener?.((changes, area) => {
+    if (area === "local" && REPO_DEFAULTS_KEY in (changes || {})) {
+      refreshPrefixList().catch(() => {});
+    }
+  });
+} catch {}
+
 // --- Boot ----------------------------------------------------------------
 (async function boot() {
   await initTheme();
@@ -513,5 +691,6 @@ try {
   await refreshRotations();
   await loadStoredClientId();
   await refreshExportPanel();
+  await refreshPrefixList();
   tokenInput.focus?.();
 })();

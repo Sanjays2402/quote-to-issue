@@ -1240,3 +1240,48 @@ for (const needle of ["inferSmartLabels", "mergeSmartLabels", "smartLabelsToggle
   if (!popupJsSmart.includes(needle)) { console.error("popup.js missing smart-labels token:", needle); process.exit(1); }
 }
 console.log("\u2713 smart-labels smoke ok");
+
+// --- Per-repo title prefix ----------------------------------------------
+const { sanitizeTitlePrefix: STP, applyTitlePrefix: ATP, MAX_TITLE_PREFIX_LEN: MTPL, normalizeRepoDefaults: NRD2 } = globalThis.__qti;
+if (typeof STP !== "function") { console.error("sanitizeTitlePrefix not exported"); process.exit(1); }
+if (typeof ATP !== "function") { console.error("applyTitlePrefix not exported"); process.exit(1); }
+if (MTPL !== 24) { console.error("MAX_TITLE_PREFIX_LEN expected 24"); process.exit(1); }
+if (STP("  [bug]  ") !== "[bug]") { console.error("STP trim"); process.exit(1); }
+if (STP("\n\t[ux]\r") !== "[ux]") { console.error("STP newlines"); process.exit(1); }
+if (STP(null) !== "") { console.error("STP null"); process.exit(1); }
+if (STP("x".repeat(80)).length !== 24) { console.error("STP cap"); process.exit(1); }
+if (ATP("Crash on save", "[bug]") !== "[bug] Crash on save") { console.error("ATP basic", JSON.stringify(ATP("Crash on save","[bug]"))); process.exit(1); }
+if (ATP("[bug] Crash on save", "[bug]") !== "[bug] Crash on save") { console.error("ATP no double", ATP("[bug] Crash on save","[bug]")); process.exit(1); }
+if (ATP("[bug]   Crash", "[bug]") !== "[bug] Crash") { console.error("ATP collapse ws"); process.exit(1); }
+if (ATP("Quote: thing", "") !== "Quote: thing") { console.error("ATP empty prefix"); process.exit(1); }
+if (ATP("", "[bug]") !== "[bug] ") { console.error("ATP empty title"); process.exit(1); }
+// Regex-special chars in prefix should not throw
+if (ATP("title", "(qa)") !== "(qa) title") { console.error("ATP regex chars"); process.exit(1); }
+// Normalize round-trip preserves titlePrefix
+const norm = NRD2({ "owner/repo": { labels: ["bug"], assignees: [], titlePrefix: "[bug]" } });
+if (norm["owner/repo"]?.titlePrefix !== "[bug]") { console.error("NRD preserves titlePrefix"); process.exit(1); }
+// Empty everything is dropped
+if (Object.keys(NRD2({ "owner/repo": { labels: [], assignees: [], titlePrefix: "" } })).length !== 0) { console.error("NRD drops empty"); process.exit(1); }
+// titlePrefix-only entry survives (so prefixes can exist without labels/assignees)
+const onlyPrefix = NRD2({ "owner/repo": { titlePrefix: "[qa]" } });
+if (onlyPrefix["owner/repo"]?.titlePrefix !== "[qa]") { console.error("NRD prefix-only"); process.exit(1); }
+
+// options.html surfaces the prefix card
+const optHtmlPx = fs.readFileSync("src/options.html", "utf8");
+for (const needle of ["data-prefix-card", 'data-field="prefix-repo"', 'data-field="prefix-value"', 'data-action="save-prefix"', "data-prefix-list", "data-prefix-empty", "Per-repo title prefix"]) {
+  if (!optHtmlPx.includes(needle)) { console.error("options.html missing prefix token:", needle); process.exit(1); }
+}
+const optJsPx = fs.readFileSync("src/options.js", "utf8");
+for (const needle of ["refreshPrefixList", "upsertPrefix", "deletePrefix", "qti.repoDefaults", "MAX_TITLE_PREFIX_LEN"]) {
+  if (!optJsPx.includes(needle)) { console.error("options.js missing prefix token:", needle); process.exit(1); }
+}
+const optCssPx = fs.readFileSync("src/options.css", "utf8");
+for (const needle of [".prefix-add", ".prefix-row", ".prefix-row-tag", ".prefix-empty"]) {
+  if (!optCssPx.includes(needle)) { console.error("options.css missing prefix token:", needle); process.exit(1); }
+}
+// popup.js: applyDefaults wires the prefix path
+const popupJsPx = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["sanitizeTitlePrefix", "applyTitlePrefix", "d.titlePrefix"]) {
+  if (!popupJsPx.includes(needle)) { console.error("popup.js missing prefix token:", needle); process.exit(1); }
+}
+console.log("\u2713 title-prefix smoke ok");
