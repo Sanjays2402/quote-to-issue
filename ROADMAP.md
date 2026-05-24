@@ -42,7 +42,7 @@ This file is the agent's task queue. Unchecked items get implemented in order. W
 - [x] Convert selection to task-list checkboxes when bullet patterns detected
 - [x] Auto-mention reviewers based on CODEOWNERS file fetched from repo
 - [x] Inline image paste support: drop screenshots/images into body editor
-- [ ] Per-repo issue limits and rate-limit awareness with backoff indicator
+- [x] Per-repo issue limits and rate-limit awareness with backoff indicator
 - [ ] Quote stacking: append additional selections to an open draft
 - [ ] Issue comment mode: post selection as comment on an existing issue/PR by URL
 - [ ] Smart label inference from selection keywords (regex + token match rules)

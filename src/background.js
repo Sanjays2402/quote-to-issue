@@ -22,7 +22,17 @@ const STORAGE_KEYS = Object.freeze({
   bulkQuotes: "qti.bulkQuotes",
   captureSettings: "qti.captureSettings",
   offlineQueue: "qti.offlineQueue",
+  rateLimit: "qti.rateLimit",
+  repoIssueRate: "qti.repoIssueRate",
 });
+
+// Per-repo issue rate window: how many issues the user has filed against a
+// single repo in the last hour. Used purely as a *soft* throttle indicator —
+// nothing is blocked, but the popup surfaces a backoff badge once the user
+// crosses the limit so a misfiring batch doesn't accidentally spam upstream.
+const REPO_RATE_WINDOW_MS = 60 * 60 * 1000;
+const REPO_RATE_DEFAULT_HOURLY_LIMIT = 12;
+const REPO_RATE_PER_REPO_CAP = 60;
 
 const MAX_OFFLINE_QUEUE = 25;
 const MAX_QUEUE_ATTEMPTS = 8;
@@ -280,6 +290,108 @@ function on(type, fn) {
   handlers.set(type, fn);
 }
 
+// ---------------------------------------------------------------------------
+// Rate-limit awareness — snapshot x-ratelimit-* headers from every GitHub
+// response so the popup can render a live core/search budget indicator.
+// ---------------------------------------------------------------------------
+async function __qtiCaptureRateLimit(res, fallbackKind) {
+  if (!res || !res.headers) return;
+  const remainingRaw = res.headers.get("x-ratelimit-remaining");
+  const limitRaw = res.headers.get("x-ratelimit-limit");
+  if (remainingRaw == null && limitRaw == null) return;
+  const remaining = Number(remainingRaw);
+  const limit = Number(limitRaw);
+  const resetSec = Number(res.headers.get("x-ratelimit-reset")) || 0;
+  const used = Number(res.headers.get("x-ratelimit-used"));
+  const resource = String(res.headers.get("x-ratelimit-resource") || fallbackKind || "core").toLowerCase();
+  try {
+    const out = await chrome.storage.local.get(STORAGE_KEYS.rateLimit);
+    const cur = (out[STORAGE_KEYS.rateLimit] && typeof out[STORAGE_KEYS.rateLimit] === "object") ? { ...out[STORAGE_KEYS.rateLimit] } : {};
+    cur[resource] = {
+      limit: Number.isFinite(limit) ? limit : 0,
+      remaining: Number.isFinite(remaining) ? remaining : 0,
+      used: Number.isFinite(used) ? used : (Number.isFinite(limit) && Number.isFinite(remaining) ? limit - remaining : 0),
+      resetAt: resetSec ? resetSec * 1000 : 0,
+      sampledAt: Date.now(),
+      status: res.status,
+    };
+    await chrome.storage.local.set({ [STORAGE_KEYS.rateLimit]: cur });
+  } catch { /* ignore */ }
+}
+
+function __qtiPruneRepoRate(map) {
+  const out = {};
+  const cutoff = Date.now() - REPO_RATE_WINDOW_MS;
+  if (!map || typeof map !== "object") return out;
+  for (const [repo, list] of Object.entries(map)) {
+    if (!REPO_RE.test(repo) || !Array.isArray(list)) continue;
+    const kept = list
+      .map((t) => Number(t))
+      .filter((t) => Number.isFinite(t) && t > cutoff)
+      .sort((a, b) => a - b)
+      .slice(-REPO_RATE_PER_REPO_CAP);
+    if (kept.length) out[repo] = kept;
+  }
+  return out;
+}
+
+async function __qtiBumpRepoIssueCount(repo) {
+  if (!REPO_RE.test(repo)) return;
+  try {
+    const out = await chrome.storage.local.get(STORAGE_KEYS.repoIssueRate);
+    const map = __qtiPruneRepoRate(out[STORAGE_KEYS.repoIssueRate]);
+    const list = Array.isArray(map[repo]) ? [...map[repo]] : [];
+    list.push(Date.now());
+    map[repo] = list.slice(-REPO_RATE_PER_REPO_CAP);
+    await chrome.storage.local.set({ [STORAGE_KEYS.repoIssueRate]: map });
+  } catch { /* ignore */ }
+}
+
+on("getRateLimitStatus", async () => {
+  try {
+    const out = await chrome.storage.local.get(STORAGE_KEYS.rateLimit);
+    const cur = (out[STORAGE_KEYS.rateLimit] && typeof out[STORAGE_KEYS.rateLimit] === "object") ? out[STORAGE_KEYS.rateLimit] : {};
+    return { ok: true, resources: cur };
+  } catch (err) {
+    return { ok: false, error: String(err?.message || err), resources: {} };
+  }
+});
+
+on("getRepoIssueRate", async (msg) => {
+  const repo = String(msg?.repo || "").trim();
+  const limitPerHour = Math.max(1, Math.min(100, Number(msg?.limit) || REPO_RATE_DEFAULT_HOURLY_LIMIT));
+  if (!REPO_RE.test(repo)) {
+    return { repo, count: 0, limitPerHour, windowMs: REPO_RATE_WINDOW_MS, oldest: 0, nextResetIn: 0 };
+  }
+  try {
+    const out = await chrome.storage.local.get(STORAGE_KEYS.repoIssueRate);
+    const map = __qtiPruneRepoRate(out[STORAGE_KEYS.repoIssueRate]);
+    const list = Array.isArray(map[repo]) ? map[repo] : [];
+    const oldest = list.length ? list[0] : 0;
+    const nextResetIn = oldest ? Math.max(0, oldest + REPO_RATE_WINDOW_MS - Date.now()) : 0;
+    return { repo, count: list.length, limitPerHour, windowMs: REPO_RATE_WINDOW_MS, oldest, nextResetIn };
+  } catch {
+    return { repo, count: 0, limitPerHour, windowMs: REPO_RATE_WINDOW_MS, oldest: 0, nextResetIn: 0 };
+  }
+});
+
+on("clearRepoIssueRate", async (msg) => {
+  const repo = String(msg?.repo || "").trim();
+  try {
+    if (!repo) {
+      await chrome.storage.local.remove(STORAGE_KEYS.repoIssueRate);
+      return { cleared: "all" };
+    }
+    const out = await chrome.storage.local.get(STORAGE_KEYS.repoIssueRate);
+    const map = __qtiPruneRepoRate(out[STORAGE_KEYS.repoIssueRate]);
+    delete map[repo];
+    await chrome.storage.local.set({ [STORAGE_KEYS.repoIssueRate]: map });
+    return { cleared: repo };
+  } catch (err) {
+    return { cleared: false, error: String(err?.message || err) };
+  }
+});
+
 on("ping", () => ({ ok: true, ts: Date.now() }));
 
 on("getVersion", () => ({
@@ -430,6 +542,7 @@ async function __qtiPostIssue(payload) {
       ...(milestone ? { milestone } : {}),
     }),
   });
+  __qtiCaptureRateLimit(res, "core").catch(() => {});
   let data = null;
   try { data = await res.json(); } catch { /* may be empty */ }
   if (!res.ok) {
@@ -451,6 +564,7 @@ async function __qtiPostIssue(payload) {
     htmlUrl: data?.html_url ?? null,
     nodeId: data?.node_id ?? null,
     repo,
+    _bumped: await __qtiBumpRepoIssueCount(repo).then(() => true).catch(() => false),
   };
 }
 
@@ -555,6 +669,7 @@ async function __qtiSearchIssues(qStr) {
   const token = await getToken().catch(() => null);
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(url, { headers });
+  __qtiCaptureRateLimit(res, "search").catch(() => {});
   if (res.status === 403 || res.status === 429) {
     const reset = Number(res.headers.get("x-ratelimit-reset")) || 0;
     const err = new Error("GitHub rate limit reached — try again shortly.");
@@ -611,6 +726,7 @@ async function __qtiFetchMilestones(repo, state) {
   const token = await getToken().catch(() => null);
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const res = await fetch(url, { headers });
+  __qtiCaptureRateLimit(res, "core").catch(() => {});
   if (res.status === 403 || res.status === 429) {
     const reset = Number(res.headers.get("x-ratelimit-reset")) || 0;
     const err = new Error("GitHub rate limit reached — try again shortly.");
@@ -717,6 +833,7 @@ async function __qtiFetchCodeownersFromRepo(repo) {
       e.networkError = true;
       throw e;
     }
+    __qtiCaptureRateLimit(res, "core").catch(() => {});
     if (res.status === 404) { lastStatus = 404; continue; }
     if (res.status === 403 || res.status === 429) {
       const reset = Number(res.headers.get("x-ratelimit-reset")) || 0;

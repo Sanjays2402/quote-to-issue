@@ -3218,6 +3218,10 @@ function buildFormNode(q, state) {
       submitBtn.classList.remove("loading");
     } finally {
       submitting = false;
+      // Refresh the rate-limit / per-repo backoff indicator: a fresh GitHub
+      // response has been observed and the per-repo counter may have been
+      // bumped server-side.
+      try { node._qtiRefreshRateLimit?.(); } catch {}
     }
   }
 
@@ -3242,6 +3246,120 @@ function buildFormNode(q, state) {
   };
   repoInput.addEventListener("input", refreshSubmitState);
   titleInput.addEventListener("input", refreshSubmitState);
+
+  // -------------------------------------------------------------------------
+  // Rate-limit + per-repo backoff indicator. Updates whenever the repo field
+  // changes, after a submit, and on a slow background poll.
+  // -------------------------------------------------------------------------
+  const rateRow = node.querySelector("[data-ratelimit-row]");
+  const rateDot = node.querySelector('[data-field="ratelimit-dot"]');
+  const rateText = node.querySelector('[data-field="ratelimit-text"]');
+  const rateMeterFill = node.querySelector('[data-field="ratelimit-meter-fill"]');
+  let rateRefreshSeq = 0;
+  let rateRefreshTimer = null;
+
+  function fmtMinsUntil(ms) {
+    const secs = Math.max(0, Math.round(ms / 1000));
+    if (secs < 90) return `${secs}s`;
+    const m = Math.round(secs / 60);
+    if (m < 90) return `${m}m`;
+    const h = Math.round(m / 60);
+    return `${h}h`;
+  }
+
+  function setRateState(state, text, fillPct) {
+    if (!rateRow) return;
+    rateRow.hidden = false;
+    rateRow.dataset.state = state;
+    if (rateDot) rateDot.dataset.state = state;
+    if (rateText) rateText.textContent = text;
+    if (rateMeterFill) rateMeterFill.style.width = `${Math.max(0, Math.min(100, fillPct))}%`;
+  }
+
+  async function refreshRateLimitIndicator() {
+    if (!rateRow) return;
+    const seq = ++rateRefreshSeq;
+    const repoVal = String(repoInput.value || "").trim();
+    const repoOk = REPO_RE.test(repoVal);
+
+    let core = null;
+    let repoRate = null;
+    try {
+      core = chrome?.runtime?.sendMessage
+        ? await chrome.runtime.sendMessage({ type: "getRateLimitStatus" })
+        : null;
+    } catch { core = null; }
+    if (repoOk) {
+      try {
+        repoRate = chrome?.runtime?.sendMessage
+          ? await chrome.runtime.sendMessage({ type: "getRepoIssueRate", repo: repoVal, limit: 12 })
+          : null;
+      } catch { repoRate = null; }
+    }
+    if (seq !== rateRefreshSeq) return; // stale
+
+    const coreRes = core?.resources?.core;
+    const searchRes = core?.resources?.search;
+
+    // 1) Per-repo backoff wins if the user is approaching their soft limit.
+    if (repoRate && repoRate.count > 0 && repoRate.limitPerHour > 0) {
+      const ratio = repoRate.count / repoRate.limitPerHour;
+      const fill = Math.min(100, ratio * 100);
+      const repoLabel = repoVal.length > 22 ? repoVal.slice(0, 21) + "…" : repoVal;
+      if (ratio >= 1) {
+        const cool = repoRate.nextResetIn > 0 ? ` · cool-off ${fmtMinsUntil(repoRate.nextResetIn)}` : "";
+        setRateState("hot", `Backoff: ${repoRate.count}/${repoRate.limitPerHour} issues to ${repoLabel} in last hour${cool}`, 100);
+        return;
+      }
+      if (ratio >= 0.66) {
+        setRateState("warn", `${repoRate.count}/${repoRate.limitPerHour} issues to ${repoLabel} in last hour`, fill);
+        return;
+      }
+      // Low ratio: fall through to GitHub-budget message but keep per-repo count visible if non-trivial.
+      if (repoRate.count >= 3) {
+        setRateState("ok", `${repoRate.count}/${repoRate.limitPerHour} issues to ${repoLabel} in last hour`, fill);
+        return;
+      }
+    }
+
+    // 2) GitHub core/search budget.
+    if (coreRes && coreRes.limit > 0) {
+      const remaining = Math.max(0, coreRes.remaining || 0);
+      const limit = coreRes.limit;
+      const fill = (remaining / limit) * 100;
+      const resetIn = coreRes.resetAt ? Math.max(0, coreRes.resetAt - Date.now()) : 0;
+      if (remaining === 0) {
+        setRateState("hot", `GitHub limit exhausted · resets in ${fmtMinsUntil(resetIn)}`, 0);
+        return;
+      }
+      if (remaining / limit <= 0.15) {
+        setRateState("warn", `GitHub: ${remaining}/${limit} left · resets in ${fmtMinsUntil(resetIn)}`, fill);
+        return;
+      }
+      if (searchRes && searchRes.limit > 0 && searchRes.remaining <= 3) {
+        setRateState("warn", `Search: ${searchRes.remaining}/${searchRes.limit} left · resets in ${fmtMinsUntil(Math.max(0, (searchRes.resetAt || 0) - Date.now()))}`, (searchRes.remaining / searchRes.limit) * 100);
+        return;
+      }
+      setRateState("ok", `GitHub: ${remaining}/${limit} requests left`, fill);
+      return;
+    }
+
+    // 3) No data yet — hide the row to stay calm.
+    rateRow.hidden = true;
+  }
+
+  function scheduleRateRefresh() {
+    if (rateRefreshTimer) clearTimeout(rateRefreshTimer);
+    rateRefreshTimer = setTimeout(() => { refreshRateLimitIndicator().catch(() => {}); }, 250);
+  }
+  repoInput.addEventListener("input", scheduleRateRefresh);
+  refreshRateLimitIndicator().catch(() => {});
+  const rateInterval = setInterval(() => { refreshRateLimitIndicator().catch(() => {}); }, 30_000);
+  // Stop polling once the form is replaced by success/queued view.
+  const stopRatePoll = () => { try { clearInterval(rateInterval); } catch {} };
+  globalThis.addEventListener?.("beforeunload", stopRatePoll, { once: true });
+  // Expose so submit handler can trigger a fresh sample.
+  node._qtiRefreshRateLimit = refreshRateLimitIndicator;
 
   // -------------------------------------------------------------------------
   // Duplicate detector
