@@ -1182,3 +1182,61 @@ for (const needle of ["submitComment", "/issues/${number}/comments", "Invalid is
   if (!swComment.includes(needle)) { console.error("background.js missing comment-mode token:", needle); process.exit(1); }
 }
 console.log("\u2713 comment-mode smoke ok");
+
+// --- Smart label inference ----------------------------------------------
+const { inferSmartLabels, mergeSmartLabels, SMART_LABEL_RULES } = globalThis.__qti;
+if (typeof inferSmartLabels !== "function") { console.error("inferSmartLabels missing"); process.exit(1); }
+if (typeof mergeSmartLabels !== "function") { console.error("mergeSmartLabels missing"); process.exit(1); }
+if (!Array.isArray(SMART_LABEL_RULES) || SMART_LABEL_RULES.length < 8) { console.error("SMART_LABEL_RULES invalid"); process.exit(1); }
+if (inferSmartLabels("").length !== 0) { console.error("inferSmartLabels empty"); process.exit(1); }
+if (inferSmartLabels(null).length !== 0) { console.error("inferSmartLabels null"); process.exit(1); }
+const sLab1 = inferSmartLabels({ selectionText: "The app crashes when opening Settings — undefined is not a function" });
+if (!sLab1.includes("bug")) { console.error("inferSmartLabels should infer bug:", sLab1); process.exit(1); }
+const sLab2 = inferSmartLabels({ selectionText: "CVE-2025-12345 lets an unauthenticated attacker run XSS" });
+if (!sLab2.includes("security")) { console.error("inferSmartLabels should infer security:", sLab2); process.exit(1); }
+const sLab3 = inferSmartLabels({ selectionText: "Typo in the README — please fix" });
+if (!sLab3.includes("docs")) { console.error("inferSmartLabels should infer docs:", sLab3); process.exit(1); }
+const sLab4 = inferSmartLabels({ selectionText: "Page is slow (~3500ms), high cpu and memory leak under load" });
+if (!sLab4.includes("performance")) { console.error("inferSmartLabels should infer performance:", sLab4); process.exit(1); }
+const sLab5 = inferSmartLabels({ selectionText: "ARIA-label missing, screen reader announces nothing for the menu" });
+if (!sLab5.includes("a11y")) { console.error("inferSmartLabels should infer a11y:", sLab5); process.exit(1); }
+const sLab6 = inferSmartLabels({ selectionText: "Just a friendly note about something neat." });
+if (sLab6.length !== 0) { console.error("inferSmartLabels should be empty for neutral text:", sLab6); process.exit(1); }
+// Cap to max
+const smartLongText = "crash bug error stacktrace XSS CVE-2024-0001 slow ARIA typo readme flaky test failing test ci pipeline";
+const sLabCap = inferSmartLabels({ selectionText: smartLongText }, { max: 3 });
+if (sLabCap.length !== 3) { console.error("inferSmartLabels max cap wrong:", sLabCap); process.exit(1); }
+// Score ordering: security outranks docs when both present (weight 3 vs 1).
+const sLabRank = inferSmartLabels({ selectionText: "CVE-2024-0001 lets attackers exploit. Also a typo in README." });
+if (sLabRank.indexOf("security") > sLabRank.indexOf("docs")) { console.error("security should outrank docs:", sLabRank); process.exit(1); }
+// Word-boundary: "category" should NOT match keyword "ci".
+const sLabWB = inferSmartLabels({ selectionText: "The category page renders fine and the article is great." });
+if (sLabWB.includes("ci")) { console.error("inferSmartLabels word-boundary failed:", sLabWB); process.exit(1); }
+// mergeSmartLabels dedupes case-insensitively and preserves order.
+const merged = mergeSmartLabels(["Bug", "p1"], ["bug", "security", "p1", "performance"]);
+if (merged.join("|") !== "Bug|p1|security|performance") { console.error("mergeSmartLabels wrong:", merged); process.exit(1); }
+if (mergeSmartLabels(null, ["a"]).join("|") !== "a") { console.error("mergeSmartLabels null base"); process.exit(1); }
+if (mergeSmartLabels(["a"], null).join("|") !== "a") { console.error("mergeSmartLabels null suggestions"); process.exit(1); }
+
+// Capture settings round-trip
+const { DEFAULT_CAPTURE_SETTINGS: DCS, normalizeCaptureSettings: NCS } = globalThis.__qti;
+if (DCS.smartLabelsEnabled !== true) { console.error("DEFAULT_CAPTURE_SETTINGS.smartLabelsEnabled default true"); process.exit(1); }
+if (NCS({ smartLabelsEnabled: false }).smartLabelsEnabled !== false) { console.error("smartLabelsEnabled false round-trip"); process.exit(1); }
+if (NCS({ smartLabelsEnabled: "yes" }).smartLabelsEnabled !== true) { console.error("smartLabelsEnabled non-bool keeps default true"); process.exit(1); }
+
+// UI scaffolding
+const popupHtmlSmart = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of [
+  "data-smart-label-row",
+  'data-action="toggle-smart-labels"',
+  'data-field="smart-labels-toggle-label"',
+  'data-field="smart-labels-knob"',
+  "Smart labels",
+]) {
+  if (!popupHtmlSmart.includes(needle)) { console.error("popup.html missing smart-labels token:", needle); process.exit(1); }
+}
+const popupJsSmart = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["inferSmartLabels", "mergeSmartLabels", "smartLabelsToggleBtn", "toggle-smart-labels", "smartLabelsEnabled", "SMART_LABEL_RULES"]) {
+  if (!popupJsSmart.includes(needle)) { console.error("popup.js missing smart-labels token:", needle); process.exit(1); }
+}
+console.log("\u2713 smart-labels smoke ok");

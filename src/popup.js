@@ -83,7 +83,7 @@ function rankDuplicates(items, tokens) {
 // ---------------------------------------------------------------------------
 const CONTEXT_RADIUS_MIN = 0;
 const CONTEXT_RADIUS_MAX = 600;
-const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false, privacyMode: false, languageLabelEnabled: true, codeownersEnabled: true });
+const DEFAULT_CAPTURE_SETTINGS = Object.freeze({ contextEnabled: true, contextRadius: 240, highlightMode: false, privacyMode: false, languageLabelEnabled: true, codeownersEnabled: true, smartLabelsEnabled: true });
 
 function normalizeCaptureSettings(raw) {
   const out = { ...DEFAULT_CAPTURE_SETTINGS };
@@ -98,6 +98,7 @@ function normalizeCaptureSettings(raw) {
   if (typeof raw.privacyMode === "boolean") out.privacyMode = raw.privacyMode;
   if (typeof raw.languageLabelEnabled === "boolean") out.languageLabelEnabled = raw.languageLabelEnabled;
   if (typeof raw.codeownersEnabled === "boolean") out.codeownersEnabled = raw.codeownersEnabled;
+  if (typeof raw.smartLabelsEnabled === "boolean") out.smartLabelsEnabled = raw.smartLabelsEnabled;
   return out;
 }
 
@@ -223,6 +224,80 @@ function mergeLanguageLabel(existingLabels, code) {
     if (lowered[i].startsWith(LANGUAGE_LABEL_PREFIX)) out.splice(i, 1);
   }
   out.push(label);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Smart label inference — scans the selection (and optional surrounding
+// context/title) for keyword and regex signals to suggest GitHub labels.
+// Pure + deterministic so the smoke test can pin the rule set. Rules are
+// returned newest-first via score; ties broken by rule order.
+// ---------------------------------------------------------------------------
+const SMART_LABEL_RULES = Object.freeze([
+  { label: "bug", weight: 2, keywords: ["bug", "broken", "crash", "crashes", "crashed", "freezes", "freeze", "frozen", "hangs", "hang", "error", "errors", "exception", "stacktrace", "traceback", "regression", "throws", "fails", "failure", "failing", "not working", "doesn't work", "does not work", "won't load", "500 internal", "nullpointer", "undefined is not"], regex: [/\bstack\s*trace\b/i, /\bNaN\b/, /\bECONN[A-Z]+\b/, /HTTP\s*5\d\d\b/i] },
+  { label: "security", weight: 3, keywords: ["vulnerability", "exploit", "xss", "csrf", "ssrf", "sqli", "sql injection", "rce", "privilege escalation", "prototype pollution", "auth bypass", "unauthenticated", "leak", "leaks", "leaked", "credential leak", "data exposure"], regex: [/\bCVE-\d{4}-\d{4,7}\b/i, /\b0-?day\b/i] },
+  { label: "performance", weight: 2, keywords: ["slow", "sluggish", "laggy", "latency", "performance", "perf", "jank", "janky", "memory leak", "high cpu", "oom", "out of memory", "timeout", "timed out", "throughput", "bottleneck"], regex: [/\b\d+\s*(?:ms|s|seconds|sec)\b/i] },
+  { label: "a11y", weight: 2, keywords: ["accessibility", "a11y", "screen reader", "screenreader", "aria", "keyboard nav", "keyboard navigation", "focus trap", "focus order", "contrast ratio", "color contrast", "wcag", "voiceover", "narrator"], regex: [/\bARIA[-_]?[A-Za-z]+\b/] },
+  { label: "docs", weight: 1, keywords: ["docs", "documentation", "readme", "changelog", "typo", "typos", "misspelled", "misspelling", "grammar", "wording", "unclear", "copy edit", "copy-edit"], regex: [] },
+  { label: "ux", weight: 1, keywords: ["confusing", "unclear ui", "hard to find", "misleading", "ux", "user experience", "copy", "label", "tooltip", "affordance"], regex: [] },
+  { label: "ui", weight: 1, keywords: ["layout", "styling", "styles", "css", "overflow", "overlap", "truncated", "misaligned", "alignment", "padding", "margin", "flicker", "flickers", "cut off", "cut-off", "clipping"], regex: [] },
+  { label: "i18n", weight: 1, keywords: ["i18n", "l10n", "translation", "translations", "localization", "localisation", "locale", "rtl", "right-to-left", "unicode"], regex: [] },
+  { label: "build", weight: 1, keywords: ["build fails", "build failure", "compile error", "compiler error", "linker error", "webpack", "vite", "rollup", "esbuild", "tsc", "transpile"], regex: [] },
+  { label: "ci", weight: 1, keywords: ["ci", "github actions", "workflow fails", "workflow failed", "pipeline", "jenkins", "circleci", "travis"], regex: [/\brunner\s+(?:fails|failed)\b/i] },
+  { label: "test", weight: 1, keywords: ["flaky test", "flaky", "flake", "flakey", "failing test", "test fails", "jest", "vitest", "playwright", "cypress", "snapshot mismatch"], regex: [] },
+  { label: "mobile", weight: 1, keywords: ["ios", "android", "safari mobile", "chrome mobile", "on iphone", "on ipad", "on pixel", "touch", "tap target"], regex: [] },
+  { label: "question", weight: 1, keywords: ["how do i", "how do you", "is it possible", "can i", "can we", "what is the", "why does", "why is", "how to"], regex: [] },
+  { label: "feature", weight: 1, keywords: ["feature request", "would be great", "would be nice", "please add", "add support for", "support for", "wish", "proposal", "rfc", "enhancement"], regex: [] },
+  { label: "dependencies", weight: 1, keywords: ["upgrade", "upgraded", "bump", "dependency", "dependencies", "package.json", "yarn.lock", "pnpm-lock", "cargo.lock", "go.mod"], regex: [/\bv?\d+\.\d+\.\d+\b/] },
+]);
+
+function inferSmartLabels(input, opts = {}) {
+  const text = String((input && typeof input === "object") ? `${input.selectionText || ""} ${input.pageTitle || ""} ${input.contextBefore || ""} ${input.contextAfter || ""}` : (input || "")).trim();
+  if (!text) return [];
+  const lower = text.toLowerCase();
+  const max = Number.isFinite(opts.max) ? Math.max(1, opts.max | 0) : 4;
+  const scored = [];
+  for (let i = 0; i < SMART_LABEL_RULES.length; i++) {
+    const rule = SMART_LABEL_RULES[i];
+    let score = 0;
+    for (const kw of rule.keywords) {
+      // Multi-word phrases use substring; single tokens use word-boundary.
+      if (kw.includes(" ") || /[^a-z0-9]/.test(kw)) {
+        if (lower.includes(kw)) score += rule.weight;
+      } else {
+        const re = new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i");
+        if (re.test(text)) score += rule.weight;
+      }
+    }
+    for (const rx of rule.regex || []) {
+      if (rx.test(text)) score += rule.weight;
+    }
+    if (score > 0) scored.push({ label: rule.label, score, order: i });
+  }
+  scored.sort((a, b) => b.score - a.score || a.order - b.order);
+  const out = [];
+  const seen = new Set();
+  for (const s of scored) {
+    if (seen.has(s.label)) continue;
+    seen.add(s.label);
+    out.push(s.label);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function mergeSmartLabels(existingLabels, suggestions) {
+  const out = Array.isArray(existingLabels) ? existingLabels.slice() : [];
+  if (!Array.isArray(suggestions) || suggestions.length === 0) return out;
+  const seen = new Set(out.map((l) => String(l).toLowerCase()));
+  for (const s of suggestions) {
+    const v = String(s || "").trim();
+    if (!v) continue;
+    const k = v.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(v);
+  }
   return out;
 }
 
@@ -1787,6 +1862,7 @@ if (typeof globalThis !== "undefined") {
     detectSelectionLanguage, languageLabelFor, mergeLanguageLabel,
     LANGUAGE_LABEL_PREFIX, LANG_KNOWN_CODES,
     parseCodeowners, buildCodeownersMentionLine,
+    inferSmartLabels, mergeSmartLabels, SMART_LABEL_RULES,
   };
 }
 
@@ -2383,13 +2459,28 @@ function buildFormNode(q, state) {
   if (!state.labels) {
     getCaptureSettings()
       .then((s) => {
-        if (!s.languageLabelEnabled) return;
-        const code = detectSelectionLanguage(q?.selectionText || "");
-        if (!code) return;
-        const cur = parseLabels(labelsInput.value);
-        const merged = mergeLanguageLabel(cur, code);
-        if (merged.join(",").toLowerCase() === cur.join(",").toLowerCase()) return;
-        labelsInput.value = merged.join(", ");
+        let cur = parseLabels(labelsInput.value);
+        let mutated = false;
+        if (s.languageLabelEnabled) {
+          const code = detectSelectionLanguage(q?.selectionText || "");
+          if (code) {
+            const merged = mergeLanguageLabel(cur, code);
+            if (merged.join(",").toLowerCase() !== cur.join(",").toLowerCase()) {
+              cur = merged; mutated = true;
+            }
+          }
+        }
+        if (s.smartLabelsEnabled !== false) {
+          const suggestions = inferSmartLabels(q || "");
+          if (suggestions.length) {
+            const merged = mergeSmartLabels(cur, suggestions);
+            if (merged.length !== cur.length) {
+              cur = merged; mutated = true;
+            }
+          }
+        }
+        if (!mutated) return;
+        labelsInput.value = cur.join(", ");
         renderLabelChips(chipRow, parseLabels(labelsInput.value), (val) => {
           const next = parseLabels(labelsInput.value).filter((x) => x !== val);
           labelsInput.value = next.join(", ");
@@ -3927,6 +4018,8 @@ async function renderSettings() {
   const privacyToggleLabel = node.querySelector('[data-field="privacy-toggle-label"]');
   const languageToggleBtn = node.querySelector('[data-action="toggle-language"]');
   const languageToggleLabel = node.querySelector('[data-field="language-toggle-label"]');
+  const smartLabelsToggleBtn = node.querySelector('[data-action="toggle-smart-labels"]');
+  const smartLabelsToggleLabel = node.querySelector('[data-field="smart-labels-toggle-label"]');
 
   async function refreshStatus() {
     const info = await getTokenInfo().catch(() => null);
@@ -4083,6 +4176,20 @@ async function renderSettings() {
     languageToggleBtn.addEventListener("click", async () => {
       const next = await setCaptureSettings({ languageLabelEnabled: languageToggleBtn.getAttribute("aria-pressed") !== "true" });
       applyLang(next.languageLabelEnabled);
+    });
+  }
+
+  // Smart-label wiring — keyword/regex-driven label suggestions.
+  if (smartLabelsToggleBtn) {
+    const cur = await getCaptureSettings();
+    const applySmart = (on) => {
+      smartLabelsToggleBtn.setAttribute("aria-pressed", String(!!on));
+      if (smartLabelsToggleLabel) smartLabelsToggleLabel.textContent = on ? "On" : "Off";
+    };
+    applySmart(cur.smartLabelsEnabled !== false);
+    smartLabelsToggleBtn.addEventListener("click", async () => {
+      const next = await setCaptureSettings({ smartLabelsEnabled: smartLabelsToggleBtn.getAttribute("aria-pressed") !== "true" });
+      applySmart(next.smartLabelsEnabled !== false);
     });
   }
 
@@ -4797,6 +4904,7 @@ async function paletteCommands(query) {
       ["toggle-privacy", "Toggle privacy mode", "toggle privacy scrub tracking"],
       ["toggle-highlight", "Toggle spotlight selection screenshot", "toggle highlight spotlight screenshot"],
       ["toggle-language", "Toggle language label", "toggle language label auto"],
+      ["toggle-smart-labels", "Toggle smart labels", "toggle smart labels keyword inference"],
     ];
     for (const [act, label, hay] of togglers) {
       const btn = form.querySelector(`[data-action="${act}"]`);
