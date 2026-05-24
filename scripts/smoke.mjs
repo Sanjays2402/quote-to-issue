@@ -1136,3 +1136,49 @@ for (const needle of ["parseCodeowners", "buildCodeownersMentionLine", "runCodeo
   if (!popupJsCo.includes(needle)) { console.error("popup.js missing CODEOWNERS token:", needle); process.exit(1); }
 }
 console.log("\u2713 codeowners smoke ok");
+
+// --- Issue comment mode (post selection as comment on existing issue/PR) ---
+const { parseIssueOrPrUrl } = globalThis.__qti;
+if (typeof parseIssueOrPrUrl !== "function") { console.error("parseIssueOrPrUrl missing"); process.exit(1); }
+for (const bad of ["", "   ", "not a url", "github.com/owner", "https://github.com/owner/repo", "https://github.com/owner/repo/issues/abc", "https://github.com/owner/repo/issues/0", "https://example.com/o/r/issues/1"]) {
+  if (parseIssueOrPrUrl(bad).ok) { console.error("parseIssueOrPrUrl should reject:", bad); process.exit(1); }
+}
+const pi1 = parseIssueOrPrUrl("https://github.com/vercel/next.js/issues/123");
+if (!pi1.ok || pi1.owner !== "vercel" || pi1.name !== "next.js" || pi1.number !== 123 || pi1.kind !== "issue") { console.error("parseIssueOrPrUrl issues:", pi1); process.exit(1); }
+const pi2 = parseIssueOrPrUrl("https://github.com/octocat/Hello-World/pull/42");
+if (!pi2.ok || pi2.kind !== "pr" || pi2.number !== 42) { console.error("parseIssueOrPrUrl pull:", pi2); process.exit(1); }
+if (pi2.value !== "https://github.com/octocat/Hello-World/pull/42") { console.error("parseIssueOrPrUrl canonical value:", pi2.value); process.exit(1); }
+const pi3 = parseIssueOrPrUrl("github.com/owner/repo/issues/7?since=2026");
+if (!pi3.ok || pi3.number !== 7) { console.error("parseIssueOrPrUrl no-scheme + query:", pi3); process.exit(1); }
+const pi4 = parseIssueOrPrUrl("https://github.com/owner/repo/issues/9#issuecomment-12345");
+if (!pi4.ok || pi4.number !== 9) { console.error("parseIssueOrPrUrl fragment:", pi4); process.exit(1); }
+const pi5 = parseIssueOrPrUrl("owner/repo#15");
+if (!pi5.ok || pi5.number !== 15) { console.error("parseIssueOrPrUrl shorthand:", pi5); process.exit(1); }
+const pi6 = parseIssueOrPrUrl("  https://github.com/owner/repo/pull/55/files  ");
+if (!pi6.ok || pi6.kind !== "pr" || pi6.number !== 55) { console.error("parseIssueOrPrUrl trailing path:", pi6); process.exit(1); }
+
+const popupHtmlComment = fs.readFileSync("src/popup.html", "utf8");
+for (const needle of [
+  "data-comment-mode-row",
+  'data-action="toggle-comment-mode"',
+  'data-field="comment-mode-toggle-label"',
+  'data-field="comment-mode-knob"',
+  'data-field="comment-target"',
+  'data-field="comment-mode-hint"',
+  "Comment mode",
+]) {
+  if (!popupHtmlComment.includes(needle)) { console.error("popup.html missing comment-mode token:", needle); process.exit(1); }
+}
+const popupCssComment = fs.readFileSync("src/popup.css", "utf8");
+for (const needle of [".comment-mode-field", ".comment-mode-row", ".comment-mode-input", ".comment-mode-hint"]) {
+  if (!popupCssComment.includes(needle)) { console.error("popup.css missing comment-mode token:", needle); process.exit(1); }
+}
+const popupJsComment = fs.readFileSync("src/popup.js", "utf8");
+for (const needle of ["parseIssueOrPrUrl", "doSubmitComment", "commentMode", "submitComment", "toggle-comment-mode"]) {
+  if (!popupJsComment.includes(needle)) { console.error("popup.js missing comment-mode token:", needle); process.exit(1); }
+}
+const swComment = fs.readFileSync("src/background.js", "utf8");
+for (const needle of ["submitComment", "/issues/${number}/comments", "Invalid issue/PR number"]) {
+  if (!swComment.includes(needle)) { console.error("background.js missing comment-mode token:", needle); process.exit(1); }
+}
+console.log("\u2713 comment-mode smoke ok");

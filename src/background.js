@@ -960,6 +960,59 @@ on("submitIssue", async (msg) => {
   }
 });
 
+// payload: { repo: "owner/name", number, body }
+// submitComment — POST a comment on an existing issue/PR using the stored PAT.
+on("submitComment", async (msg) => {
+  const repo = String(msg?.repo || "").trim();
+  const number = Number(msg?.number);
+  const body = String(msg?.body || "");
+  if (!REPO_RE.test(repo)) throw new Error("Invalid repo (use owner/name)");
+  if (!Number.isFinite(number) || number <= 0) throw new Error("Invalid issue/PR number");
+  if (!body.trim()) throw new Error("Comment body is required");
+  const token = await getToken();
+  if (!token) {
+    const err = new Error("No GitHub token saved \u2014 open settings to add one.");
+    err.status = 401;
+    throw err;
+  }
+  // Same endpoint serves issues *and* pull requests for plain comments.
+  const res = await fetch(`${GITHUB_API}/repos/${repo}/issues/${number}/comments`, {
+    method: "POST",
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ body }),
+  });
+  __qtiCaptureRateLimit(res, "core").catch(() => {});
+  let data = null;
+  try { data = await res.json(); } catch { /* may be empty */ }
+  if (!res.ok) {
+    const msgs = [];
+    if (data?.message) msgs.push(data.message);
+    if (Array.isArray(data?.errors)) {
+      for (const e of data.errors) {
+        if (e?.message) msgs.push(e.message);
+        else if (e?.field && e?.code) msgs.push(`${e.field}: ${e.code}`);
+      }
+    }
+    const detail = msgs.length ? msgs.join(" \u2014 ") : `${res.status} ${res.statusText}`;
+    const err = new Error(`GitHub: ${detail}`);
+    err.status = res.status;
+    throw err;
+  }
+  return {
+    repo,
+    number,
+    commentId: data?.id ?? null,
+    htmlUrl: data?.html_url ?? null,
+    nodeId: data?.node_id ?? null,
+    commented: true,
+  };
+});
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------

@@ -510,6 +510,39 @@ function parseRepo(input) {
   return { ok: true, value: `${owner}/${name}`, owner, name };
 }
 
+// GitHub issue/PR URL → { ok, owner, repo, number, kind, value }. Accepts the
+// public URL forms users typically paste:
+//   https://github.com/owner/name/issues/123
+//   https://github.com/owner/name/pull/123
+//   github.com/owner/name/issues/123 (no scheme)
+//   owner/name#123
+// Trailing fragments / query strings (?since=…, #issuecomment-…) are tolerated.
+function parseIssueOrPrUrl(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return { ok: false, value: "", error: "" };
+  let owner = "", name = "", number = 0, kind = "issue";
+  // owner/name#123 shorthand
+  const short = raw.match(/^([A-Za-z0-9][A-Za-z0-9._-]{0,99})\/([A-Za-z0-9._-]{1,100})#(\d+)$/);
+  if (short) {
+    owner = short[1]; name = short[2]; number = Number(short[3]); kind = "issue";
+  } else {
+    let s = raw.replace(/^https?:\/\//i, "");
+    s = s.replace(/^(www\.)?github\.com\//i, "");
+    s = s.replace(/[?#].*$/, "");
+    s = s.replace(/\/+$/, "");
+    const m = s.match(/^([A-Za-z0-9][A-Za-z0-9._-]{0,99})\/([A-Za-z0-9._-]{1,100})\/(issues|pull)\/(\d+)(?:\/[A-Za-z0-9_-]+)?$/);
+    if (!m) return { ok: false, value: "", error: "Use the form https://github.com/owner/name/issues/123" };
+    owner = m[1]; name = m[2]; kind = m[3] === "pull" ? "pr" : "issue"; number = Number(m[4]);
+  }
+  if (!Number.isFinite(number) || number <= 0 || number > 9_999_999) {
+    return { ok: false, value: "", error: "Issue/PR number missing" };
+  }
+  if (!REPO_RE.test(`${owner}/${name}`)) {
+    return { ok: false, value: "", error: "Invalid repo owner/name" };
+  }
+  return { ok: true, owner, name, number, kind, value: `https://github.com/${owner}/${name}/${kind === "pr" ? "pull" : "issues"}/${number}` };
+}
+
 function parseLabels(input) {
   return String(input || "")
     .split(/[,\n]/)
@@ -1735,7 +1768,7 @@ async function setRepoIssueType(repo, type) {
 // expose for tests
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
-    parseRepo, parseLabels, parseAssignees, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, detectTaskListLines, BULLET_LINE_RE, buildSourceUrlWithAnchor, deriveScreenshotFilename,
+    parseRepo, parseLabels, parseAssignees, parseIssueOrPrUrl, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, detectTaskListLines, BULLET_LINE_RE, buildSourceUrlWithAnchor, deriveScreenshotFilename,
     formatBytes, formatPublishDate, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeRepoDefaults,
@@ -3200,6 +3233,75 @@ function buildFormNode(q, state) {
 
   submitBtn.title = "Create a GitHub issue with the captured quote";
 
+  // -------------------------------------------------------------------------
+  // Comment mode — post the captured body as a comment on an existing
+  // issue/PR instead of creating a new issue. Toggled per-popup; the user's
+  // chosen state and target URL persist via form state.
+  // -------------------------------------------------------------------------
+  const commentModeRow = node.querySelector("[data-comment-mode-row]");
+  const commentModeToggle = node.querySelector('[data-action="toggle-comment-mode"]');
+  const commentModeToggleLabel = node.querySelector('[data-field="comment-mode-toggle-label"]');
+  const commentModeInputWrap = node.querySelector('[data-field="comment-mode-input-wrap"]');
+  const commentTargetInput = node.querySelector('[data-field="comment-target"]');
+  const commentModeHint = node.querySelector('[data-field="comment-mode-hint"]');
+  let commentMode = !!state.commentMode;
+  if (commentTargetInput && typeof state.commentTarget === "string") commentTargetInput.value = state.commentTarget;
+
+  function applyCommentModeUi() {
+    if (!commentModeRow) return;
+    commentModeRow.classList.toggle("is-on", commentMode);
+    commentModeToggle?.setAttribute("aria-pressed", commentMode ? "true" : "false");
+    if (commentModeToggleLabel) commentModeToggleLabel.textContent = commentMode ? "On" : "Off";
+    if (commentModeInputWrap) commentModeInputWrap.hidden = !commentMode;
+    if (commentModeHint) commentModeHint.hidden = !commentMode;
+    if (titleInput) {
+      titleInput.disabled = commentMode;
+      titleInput.classList.toggle("is-muted", commentMode);
+    }
+    if (submitBtn) {
+      const span = submitBtn.querySelector("span");
+      if (span) span.textContent = commentMode ? "Post comment" : "Create issue";
+      submitBtn.title = commentMode
+        ? "Post the body as a comment on the linked issue/PR"
+        : "Create a GitHub issue with the captured quote";
+    }
+    validateCommentTarget();
+    try { refreshSubmitState?.(); } catch { /* not yet initialized */ }
+  }
+  function parseCommentTarget() {
+    const v = commentTargetInput ? commentTargetInput.value : "";
+    return parseIssueOrPrUrl(v);
+  }
+  function validateCommentTarget() {
+    if (!commentTargetInput) return { ok: false };
+    const r = parseCommentTarget();
+    commentTargetInput.classList.toggle("is-invalid", commentMode && !!commentTargetInput.value && !r.ok);
+    if (commentMode && commentModeHint) {
+      if (!commentTargetInput.value.trim()) {
+        commentModeHint.textContent = "Paste an issue or PR URL. Title is ignored; only the body posts.";
+        commentModeHint.classList.remove("error");
+      } else if (!r.ok) {
+        commentModeHint.textContent = r.error || "Use https://github.com/owner/name/issues/123";
+        commentModeHint.classList.add("error");
+      } else {
+        commentModeHint.classList.remove("error");
+        commentModeHint.textContent = `Will comment on ${r.owner}/${r.name} #${r.number} (${r.kind === "pr" ? "PR" : "issue"}).`;
+      }
+    }
+    return r;
+  }
+  commentModeToggle?.addEventListener("click", async () => {
+    commentMode = !commentMode;
+    applyCommentModeUi();
+    await saveFormState({ commentMode }).catch(() => {});
+  });
+  commentTargetInput?.addEventListener("input", async () => {
+    validateCommentTarget();
+    try { refreshSubmitState?.(); } catch {}
+    await saveFormState({ commentTarget: commentTargetInput.value }).catch(() => {});
+  });
+  applyCommentModeUi();
+
   let submitting = false;
   const errorEl = document.createElement("p");
   errorEl.className = "field-hint error submit-error";
@@ -3208,6 +3310,7 @@ function buildFormNode(q, state) {
 
   async function doSubmit() {
     if (submitting) return;
+    if (commentMode) return doSubmitComment();
     const repo = parseRepo(repoInput.value);
     const title = titleInput.value.trim();
     if (!repo.ok || !title) {
@@ -3279,6 +3382,59 @@ function buildFormNode(q, state) {
     }
   }
 
+  async function doSubmitComment() {
+    const target = parseCommentTarget();
+    if (!target.ok) {
+      validateCommentTarget();
+      commentTargetInput?.focus();
+      return;
+    }
+    if (!(await hasToken())) {
+      errorEl.hidden = false;
+      errorEl.textContent = "Add a GitHub token in settings first.";
+      return;
+    }
+    submitting = true;
+    submitBtn.disabled = true;
+    submitBtn.classList.add("loading");
+    errorEl.hidden = true;
+    try {
+      const reply = await chrome.runtime.sendMessage({
+        type: "submitComment",
+        repo: `${target.owner}/${target.name}`,
+        number: target.number,
+        body: effectiveBody(),
+      });
+      if (!reply?.ok) throw new Error(reply?.error || "Unknown error");
+      const created = reply.result || {};
+      const repoVal = `${target.owner}/${target.name}`;
+      await addRecentRepo(repoVal).catch(() => {});
+      // Treat the commented-on issue as a recent issue so the user can jump back.
+      await addRecentIssue({
+        repo: repoVal, number: target.number,
+        htmlUrl: created?.htmlUrl || target.value,
+        title: `Comment on #${target.number}`,
+      }).catch(() => {});
+      if (activeDraftId) await deleteDraft(activeDraftId).catch(() => {});
+      await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);
+      await saveFormState({ title: "", draftId: null });
+      renderSuccess({
+        repo: repoVal,
+        number: target.number,
+        htmlUrl: created?.htmlUrl || target.value,
+        commented: true,
+      });
+    } catch (err) {
+      errorEl.hidden = false;
+      errorEl.textContent = String(err?.message || err);
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("loading");
+    } finally {
+      submitting = false;
+      try { node._qtiRefreshRateLimit?.(); } catch {}
+    }
+  }
+
   submitBtn.addEventListener("click", doSubmit);
 
   // Reflect token presence on submit hint and enable submission when ready.
@@ -3295,6 +3451,10 @@ function buildFormNode(q, state) {
 
   const refreshSubmitState = async () => {
     const has = await hasToken().catch(() => false);
+    if (commentMode) {
+      submitBtn.disabled = !(has && parseCommentTarget().ok);
+      return;
+    }
     const repoOk = parseRepo(repoInput.value).ok;
     submitBtn.disabled = !(has && repoOk && titleInput.value.trim());
   };
@@ -3937,9 +4097,11 @@ function renderSuccess(info) {
   const link = node.querySelector('[data-field="success-link"]');
   const repo = info?.repo || "";
   const num = info?.number;
-  sub.textContent = num != null && repo
-    ? `${repo} #${num} created on GitHub.`
-    : `Issue created${repo ? " on " + repo : ""}.`;
+  sub.textContent = info?.commented && num != null && repo
+    ? `Comment posted on ${repo} #${num}.`
+    : (num != null && repo
+      ? `${repo} #${num} created on GitHub.`
+      : `Issue created${repo ? " on " + repo : ""}.`);
   if (info?.htmlUrl) link.href = info.htmlUrl;
   else { link.removeAttribute("href"); link.classList.add("disabled"); }
   node.querySelector('[data-action="file-another"]').addEventListener("click", () => {
