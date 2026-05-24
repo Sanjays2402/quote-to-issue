@@ -298,6 +298,7 @@ const MAX_BULK_QUOTES = 20;
 
 const MAX_DRAFTS = 25;
 const MAX_DRAFT_BODY_LEN = 32_000;
+const MAX_DRAFT_STACK = 10;
 
 const MAX_TEMPLATE_LEN = 8000;
 const DEFAULT_TEMPLATE = `## Summary\n\n\n## Quote\n\n{{quote_blockquote}}\n\n## Source\n\n- **Page:** [{{source_title}}]({{source_url_anchor}})\n- **Section:** {{section}}\n- **Captured:** {{captured}}\n\n{{screenshot_note}}\n`;
@@ -1259,10 +1260,20 @@ function normalizeDrafts(list) {
     const assignees = String(raw.assignees || "").slice(0, 256);
     const body = String(raw.body || "").slice(0, MAX_DRAFT_BODY_LEN);
     const quote = raw.quote && typeof raw.quote === "object" ? raw.quote : null;
+    // Stacked quotes — additional selections appended onto this draft over time.
+    const stackRaw = Array.isArray(raw.additionalQuotes) ? raw.additionalQuotes : [];
+    const additionalQuotes = [];
+    for (const sq of stackRaw) {
+      if (!sq || typeof sq !== "object") continue;
+      const sel = String(sq.selectionText || "").trim();
+      if (!sel) continue;
+      additionalQuotes.push(sq);
+      if (additionalQuotes.length >= MAX_DRAFT_STACK) break;
+    }
     const createdAt = typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString();
     const updatedAt = typeof raw.updatedAt === "string" ? raw.updatedAt : createdAt;
-    if (!title.trim() && !body.trim() && !(quote && quote.selectionText)) continue;
-    out.push({ id, title, repo, labels, assignees, body, quote, createdAt, updatedAt });
+    if (!title.trim() && !body.trim() && !(quote && quote.selectionText) && additionalQuotes.length === 0) continue;
+    out.push({ id, title, repo, labels, assignees, body, quote, additionalQuotes, createdAt, updatedAt });
   }
   out.sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0));
   return out.slice(0, MAX_DRAFTS);
@@ -1292,6 +1303,49 @@ async function deleteDraft(id) {
   if (!id || !chrome?.storage?.local) return;
   const cur = await getDrafts();
   await chrome.storage.local.set({ [STORAGE_KEYS.drafts]: cur.filter((d) => d.id !== id) });
+}
+
+/**
+ * Quote stacking — append a freshly-captured selection onto an existing draft.
+ * The new selection becomes another `> blockquote` block in the draft body
+ * (separated by `---`) and is recorded under `additionalQuotes` so it can be
+ * re-rendered or removed later. Cap-respecting and idempotent: if the same
+ * URL+selection fingerprint is already stacked we no-op so accidental
+ * double-clicks don't bloat the body.
+ */
+function stackFingerprint(q) {
+  const sel = String(q?.selectionText || "").replace(/\s+/g, " ").trim().slice(0, 200);
+  const url = String(q?.pageUrl || "");
+  return `${url}::${sel}`;
+}
+
+async function appendQuoteToDraft(draftId, quote) {
+  if (!draftId || !quote || !quote.selectionText) {
+    throw new Error("missing draft id or quote");
+  }
+  const cur = await getDrafts();
+  const target = cur.find((d) => d.id === draftId);
+  if (!target) throw new Error("draft not found");
+  // Idempotence: skip if this exact selection is already stacked.
+  const fp = stackFingerprint(quote);
+  const dupe = (target.additionalQuotes || []).some((q) => stackFingerprint(q) === fp)
+    || (target.quote && stackFingerprint(target.quote) === fp);
+  let nextBody = target.body || "";
+  if (!dupe) {
+    const snippet = buildMarkdownBody(quote);
+    const sep = nextBody.trim() ? "\n\n---\n\n" : "";
+    nextBody = (nextBody + sep + snippet).slice(0, MAX_DRAFT_BODY_LEN);
+  }
+  const additionalQuotes = dupe
+    ? (target.additionalQuotes || [])
+    : [...(target.additionalQuotes || []), quote].slice(-MAX_DRAFT_STACK);
+  const saved = await saveDraft({
+    ...target,
+    id: draftId,
+    body: nextBody,
+    additionalQuotes,
+  });
+  return { draft: saved, dedup: dupe };
 }
 
 // ---------------------------------------------------------------------------
@@ -1685,7 +1739,7 @@ if (typeof globalThis !== "undefined") {
     formatBytes, formatPublishDate, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeRepoDefaults,
-    normalizeDrafts, MAX_DRAFTS,
+    normalizeDrafts, MAX_DRAFTS, MAX_DRAFT_STACK, appendQuoteToDraft, stackFingerprint,
     normalizeBulkQuotes, MAX_BULK_QUOTES,
     normalizeRecentIssues, MAX_RECENT_ISSUES,
     normalizeQuoteHistory, searchQuoteHistory, MAX_QUOTE_HISTORY,
@@ -3898,12 +3952,97 @@ function renderSuccess(info) {
   } catch {}
 }
 
+function buildStackBanner(q, drafts) {
+  // Liquid-glass banner: "Stack this onto an open draft?" Lists up to 3 most
+  // recent drafts that already have a selection — click to append + open.
+  const eligible = (drafts || [])
+    .filter((d) => (d.quote && d.quote.selectionText) || (d.additionalQuotes && d.additionalQuotes.length))
+    .slice(0, 3);
+  if (!eligible.length) return null;
+  const wrap = document.createElement("section");
+  wrap.className = "stack-banner glass";
+  wrap.dataset.stackBanner = "";
+  const head = document.createElement("header");
+  head.className = "stack-banner-head";
+  head.innerHTML = `
+    <svg viewBox="0 0 24 24" class="meta-icon" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M4 8l8-4 8 4-8 4-8-4z"></path>
+      <path d="M4 12l8 4 8-4"></path>
+      <path d="M4 16l8 4 8-4"></path>
+    </svg>
+    <span class="stack-banner-title">Stack onto an open draft?</span>
+    <button class="icon-btn ghost" type="button" data-action="dismiss-stack" title="Dismiss" aria-label="Dismiss">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 6l12 12"></path><path d="M18 6L6 18"></path>
+      </svg>
+    </button>`;
+  wrap.appendChild(head);
+  const list = document.createElement("ul");
+  list.className = "stack-banner-list";
+  list.setAttribute("role", "list");
+  for (const d of eligible) {
+    const li = document.createElement("li");
+    li.className = "stack-banner-row";
+    const stackCount = 1 + (d.additionalQuotes ? d.additionalQuotes.length : 0);
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "stack-banner-btn";
+    btn.dataset.action = "stack-onto-draft";
+    btn.dataset.draftId = d.id;
+    const titleText = d.title || d.quote?.selectionText?.slice(0, 60) || "(untitled draft)";
+    btn.innerHTML = `
+      <span class="stack-banner-row-title"></span>
+      <span class="stack-banner-row-meta">
+        <span class="stack-banner-row-repo"></span>
+        <span class="stack-banner-row-count"></span>
+      </span>`;
+    btn.querySelector(".stack-banner-row-title").textContent = titleText;
+    btn.querySelector(".stack-banner-row-repo").textContent = d.repo || "no repo";
+    btn.querySelector(".stack-banner-row-count").textContent = `${stackCount} quote${stackCount === 1 ? "" : "s"}`;
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try {
+        const { draft, dedup } = await appendQuoteToDraft(d.id, q);
+        // Clear the pending quote so it doesn't re-render on the next load,
+        // then resume the freshly-extended draft.
+        await chrome.storage?.local?.remove?.(STORAGE_KEYS.pendingQuote);
+        await loadDraft(draft);
+        if (dedup) {
+          const status = document.querySelector('[data-field="draft-status"]');
+          if (status) { status.textContent = "Already stacked — no changes."; status.dataset.kind = "ok"; status.hidden = false; setTimeout(() => { status.hidden = true; }, 2400); }
+        }
+      } catch (err) {
+        btn.disabled = false;
+        const status = document.querySelector('[data-field="draft-status"]') || head;
+        if (status) { status.textContent = `Stack failed: ${err?.message || err}`; status.dataset.kind = "err"; status.hidden = false; }
+      }
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+  wrap.appendChild(list);
+  head.querySelector('[data-action="dismiss-stack"]').addEventListener("click", () => {
+    wrap.remove();
+  });
+  return wrap;
+}
+
 function renderQuote(q) {
   const frag = document.createDocumentFragment();
   frag.appendChild(renderQuoteCard(q));
+  // Build the form first; stack banner is appended asynchronously once we
+  // have the drafts list, so the form never blocks on storage I/O.
   loadFormState().then((state) => {
     frag.appendChild(buildFormNode(q, state));
     root.replaceChildren(frag);
+    getDrafts().then((drafts) => {
+      const banner = buildStackBanner(q, drafts);
+      if (!banner) return;
+      // Insert above the form node.
+      const form = root.querySelector(".form") || root.querySelector("[data-form]") || root.lastElementChild;
+      if (form && form.parentNode === root) root.insertBefore(banner, form);
+      else root.appendChild(banner);
+    }).catch(() => {});
   }).catch(() => {
     frag.appendChild(buildFormNode(q, {}));
     root.replaceChildren(frag);

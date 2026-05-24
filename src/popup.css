@@ -2617,3 +2617,76 @@ body[data-theme="light"] .body-input { background: rgba(0,0,0,0.04); }
   margin: 6px 0;
   display: block;
 }
+
+/* ---------------------------------------------------------------------------
+ * Quote stacking banner — invites the user to append a freshly-captured
+ * selection onto an existing open draft instead of starting a new issue.
+ * ------------------------------------------------------------------------ */
+.stack-banner {
+  margin: 12px 16px 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-soft, rgba(255,255,255,0.08));
+  background: linear-gradient(180deg, rgba(124,140,255,0.10), rgba(124,140,255,0.02));
+  backdrop-filter: saturate(140%) blur(18px);
+  -webkit-backdrop-filter: saturate(140%) blur(18px);
+  animation: stack-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes stack-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.stack-banner-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.stack-banner-title {
+  flex: 1;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.stack-banner-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.stack-banner-row { margin: 0; }
+.stack-banner-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft, rgba(255,255,255,0.08));
+  background: rgba(255,255,255,0.04);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms cubic-bezier(0.16, 1, 0.3, 1), transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.stack-banner-btn:hover { background: rgba(124,140,255,0.12); border-color: rgba(124,140,255,0.4); }
+.stack-banner-btn:focus-visible { outline: 2px solid rgba(124,140,255,0.6); outline-offset: 1px; }
+.stack-banner-btn:disabled { opacity: 0.55; cursor: progress; }
+.stack-banner-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.45;
+}
+.stack-banner-row-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted, rgba(255,255,255,0.55));
+}
+.stack-banner-row-repo { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.stack-banner-row-count {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(124,140,255,0.16);
+  color: rgba(168,180,255,1);
+}
