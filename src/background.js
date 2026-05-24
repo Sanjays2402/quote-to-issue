@@ -153,6 +153,18 @@ function __qtiBuildCodeFence(q) {
   return `${fence}${lang}\n${raw.replace(/\r\n?/g, "\n")}\n${fence}`;
 }
 
+const __qtiBulletLineRe = /^\s*(?:[-*•·◦▪●‣⁃∙]|\d{1,3}[.)])\s+/;
+function __qtiDetectTaskListLines(text) {
+  const raw = String(text || "");
+  if (!raw) return null;
+  const lines = raw.split(/\r?\n/);
+  const nonEmpty = lines.filter((ln) => ln.trim());
+  if (nonEmpty.length < 2) return null;
+  if (!nonEmpty.every((ln) => __qtiBulletLineRe.test(ln))) return null;
+  const out = nonEmpty.map((ln) => "- [ ] " + ln.replace(__qtiBulletLineRe, "").trim()).filter((ln) => ln.length > 6);
+  return out.length >= 2 ? out : null;
+}
+
 function __qtiBuildMarkdownBody(q) {
   if (!q) return "";
   const lines = [];
@@ -161,7 +173,12 @@ function __qtiBuildMarkdownBody(q) {
     lines.push(__qtiBuildCodeFence(q));
     lines.push("");
   } else if (quoted) {
-    for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+    const tasks = (q.taskListEnabled === false) ? null : __qtiDetectTaskListLines(quoted);
+    if (tasks) {
+      for (const t of tasks) lines.push(t);
+    } else {
+      for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+    }
     lines.push("");
   }
   const before = String(q.contextBefore || "").trim();
@@ -209,10 +226,13 @@ function __qtiRenderTemplate(tpl, q) {
   const quoted = String(q?.selectionText || "").trim();
   const quoteBlock = quoted ? quoted.split(/\r?\n/).map((ln) => "> " + ln).join("\n") : "";
   const quoteCode = (q && q.isCode) ? __qtiBuildCodeFence(q) : (quoted ? "```\n" + quoted + "\n```" : "");
+  const taskLines = __qtiDetectTaskListLines(quoted);
+  const quoteTaskList = taskLines ? taskLines.join("\n") : "";
   const repls = {
     quote: quoted,
     quote_blockquote: quoteBlock,
     quote_code: quoteCode,
+    quote_tasklist: quoteTaskList,
     code_language: String(q?.codeLanguage || ""),
     source_title: String(q?.pageTitle || ""),
     source_url: String(q?.pageUrl || ""),

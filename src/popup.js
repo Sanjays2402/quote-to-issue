@@ -595,6 +595,21 @@ function buildCodeFence(q) {
   return `${fence}${lang}\n${raw.replace(/\r\n?/g, "\n")}\n${fence}`;
 }
 
+// Detect bullet lists in a selection and render them as a GitHub task list.
+// Triggers when every non-empty line starts with a bullet marker (`- `,
+// `* `, `• `, `· `, `1.`, `2)` …) and there are at least two such lines.
+const BULLET_LINE_RE = /^\s*(?:[-*•·◦▪●‣⁃∙]|\d{1,3}[.)])\s+/;
+
+function detectTaskListLines(text) {
+  const raw = String(text || "");
+  if (!raw) return null;
+  const lines = raw.split(/\r?\n/);
+  const nonEmpty = lines.filter((ln) => ln.trim());
+  if (nonEmpty.length < 2) return null;
+  if (!nonEmpty.every((ln) => BULLET_LINE_RE.test(ln))) return null;
+  return nonEmpty.map((ln) => "- [ ] " + ln.replace(BULLET_LINE_RE, "").trim()).filter((ln) => ln.length > 6);
+}
+
 function buildMarkdownBody(q) {
   if (!q) return "";
   const lines = [];
@@ -603,7 +618,12 @@ function buildMarkdownBody(q) {
     lines.push(buildCodeFence(q));
     lines.push("");
   } else if (quoted) {
-    for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+    const tasks = (q.taskListEnabled === false) ? null : detectTaskListLines(quoted);
+    if (tasks && tasks.length >= 2) {
+      for (const t of tasks) lines.push(t);
+    } else {
+      for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+    }
     lines.push("");
   }
   const before = (q.contextBefore || "").trim();
@@ -932,10 +952,13 @@ function renderTemplate(tmpl, q) {
     screenshotNote = `**Screenshot:** captured (${dim}) — paste from clipboard or attach the downloaded PNG when filing.`;
   }
   const quoteCode = q?.isCode ? buildCodeFence(q) : (quoted ? "```\n" + quoted + "\n```" : "");
+  const taskLines = detectTaskListLines(quoted);
+  const quoteTaskList = (taskLines && taskLines.length >= 2) ? taskLines.join("\n") : "";
   const vars = {
     quote: quoted,
     quote_blockquote: quoteBlock,
     quote_code: quoteCode,
+    quote_tasklist: quoteTaskList,
     code_language: q?.codeLanguage || "",
     source_title: sourceTitle,
     source_url: sourceUrl,
@@ -1596,7 +1619,7 @@ async function setRepoIssueType(repo, type) {
 // expose for tests
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
-    parseRepo, parseLabels, parseAssignees, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, buildSourceUrlWithAnchor, deriveScreenshotFilename,
+    parseRepo, parseLabels, parseAssignees, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, detectTaskListLines, BULLET_LINE_RE, buildSourceUrlWithAnchor, deriveScreenshotFilename,
     formatBytes, formatPublishDate, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeRepoDefaults,
