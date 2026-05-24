@@ -1058,6 +1058,14 @@ function renderInline(s) {
     codes.push(c);
     return `\u0000C${codes.length - 1}\u0000`;
   });
+  // Images: ![alt](url) — allow http(s) and data:image/* URLs.
+  out = out.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (m, alt, href, title) => {
+    const safe = (/^(https?:|data:image\/)/i.test(href)) ? href : "";
+    if (!safe) return m;
+    const t = title ? ` title="${escapeHtml(title)}"` : "";
+    const a = alt ? ` alt="${escapeHtml(alt)}"` : ' alt=""';
+    return `<img src="${safe}"${a}${t} loading="lazy" class="md-img">`;
+  });
   // Links: [text](url) — only allow http(s)/mailto/# urls.
   out = out.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g, (m, text, href, title) => {
     const safe = /^(https?:|mailto:|#)/i.test(href) ? href : "#";
@@ -2133,6 +2141,15 @@ function buildFormNode(q, state) {
   const previewRendered = node.querySelector('[data-field="preview-rendered"]');
   const previewTabs = node.querySelectorAll('[data-action="preview-mode"]');
   const toggleBtn = node.querySelector('[data-action="toggle-preview"]');
+  const bodyEditorBox = node.querySelector("[data-body-editor]");
+  const bodyInput = node.querySelector('[data-field="body"]');
+  const bodyFileInput = node.querySelector('[data-field="body-file"]');
+  const bodyEditorHint = node.querySelector('[data-field="body-editor-hint"]');
+  const bodyEditorToggle = node.querySelector('[data-action="toggle-body-editor"]');
+  const bodyResetBtn = node.querySelector('[data-action="reset-body"]');
+  const bodyAttachBtn = node.querySelector('[data-action="attach-image"]');
+  let bodyDirty = false;
+  let bodyEditorOpen = false;
   let previewMode = "rendered";
   const submitBtn = node.querySelector('[data-action="submit"]');
   const saveDraftBtn = node.querySelector('[data-action="save-draft"]');
@@ -2310,7 +2327,7 @@ function buildFormNode(q, state) {
   previewBody.textContent = buildMarkdownBody(q);
   if (previewRendered) previewRendered.innerHTML = renderMarkdownPreview(buildMarkdownBody(q));
 
-  function effectiveBody() {
+  function generatedBody() {
     const base = activeTemplate && activeTemplate.body
       ? renderTemplate(activeTemplate.body, q)
       : buildMarkdownBody(q);
@@ -2320,6 +2337,24 @@ function buildFormNode(q, state) {
     const trimmed = base.replace(/\s+$/, "");
     return trimmed ? `${trimmed}\n\n${mention}\n` : `${mention}\n`;
   }
+  function effectiveBody() {
+    if (bodyDirty && bodyInput && typeof bodyInput.value === "string" && bodyInput.value.length) {
+      return bodyInput.value;
+    }
+    return generatedBody();
+  }
+  function syncBodyEditorFromGenerated() {
+    if (!bodyInput || bodyDirty) return;
+    bodyInput.value = generatedBody();
+  }
+  function setBodyEditorOpen(open) {
+    bodyEditorOpen = !!open;
+    if (bodyEditorBox) bodyEditorBox.hidden = !bodyEditorOpen;
+    if (bodyEditorToggle) bodyEditorToggle.setAttribute("aria-pressed", String(bodyEditorOpen));
+    if (bodyEditorOpen) syncBodyEditorFromGenerated();
+  }
+  // Initialize the editor value so toggling is instant.
+  if (bodyInput) bodyInput.value = generatedBody();
 
   function refreshPreviewIfOpen() {
     if (previewBox.hidden) return;
@@ -2967,6 +3002,147 @@ function buildFormNode(q, state) {
     toggleBtn.setAttribute("aria-pressed", String(!shown));
     if (!shown) refreshPreviewIfOpen();
   });
+
+  // ------------------------------------------------------------------
+  // Inline body editor: paste/drop images become Markdown data-URL images.
+  // ------------------------------------------------------------------
+  const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB per image
+  function showBodyEditorHint(msg, kind) {
+    if (!bodyEditorHint) return;
+    bodyEditorHint.textContent = msg || "Paste or drop images to embed them inline as Markdown.";
+    bodyEditorHint.dataset.kind = kind || "";
+    clearTimeout(showBodyEditorHint._t);
+    if (kind) {
+      showBodyEditorHint._t = setTimeout(() => {
+        bodyEditorHint.textContent = "Paste or drop images to embed them inline as Markdown.";
+        bodyEditorHint.dataset.kind = "";
+      }, 3200);
+    }
+  }
+  function insertAtCursor(textarea, snippet) {
+    if (!textarea) return;
+    const start = textarea.selectionStart ?? textarea.value.length;
+    const end = textarea.selectionEnd ?? textarea.value.length;
+    const before = textarea.value.slice(0, start);
+    const after = textarea.value.slice(end);
+    const sep = (before && !before.endsWith("\n")) ? "\n\n" : "";
+    const sepAfter = (after && !after.startsWith("\n")) ? "\n\n" : "";
+    const next = before + sep + snippet + sepAfter + after;
+    textarea.value = next;
+    const caret = (before + sep + snippet).length;
+    textarea.selectionStart = textarea.selectionEnd = caret;
+  }
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onerror = () => reject(fr.error || new Error("read failed"));
+      fr.onload = () => resolve(String(fr.result || ""));
+      fr.readAsDataURL(file);
+    });
+  }
+  async function embedImages(files) {
+    if (!bodyInput || !files || files.length === 0) return 0;
+    if (!bodyEditorOpen) setBodyEditorOpen(true);
+    let count = 0;
+    let skipped = 0;
+    const snippets = [];
+    for (const f of files) {
+      if (!f || typeof f !== "object") continue;
+      if (!f.type || !/^image\//i.test(f.type)) { skipped += 1; continue; }
+      if (f.size && f.size > MAX_INLINE_IMAGE_BYTES) { skipped += 1; continue; }
+      try {
+        const dataUrl = await fileToDataUrl(f);
+        if (!/^data:image\//.test(dataUrl)) { skipped += 1; continue; }
+        const alt = (f.name || "image").replace(/[\[\]\n\r]/g, "").slice(0, 80) || "image";
+        snippets.push(`![${alt}](${dataUrl})`);
+        count += 1;
+      } catch {
+        skipped += 1;
+      }
+    }
+    if (snippets.length) {
+      // Mark dirty so effectiveBody() prefers the editor contents over the generated body.
+      if (!bodyDirty) {
+        // Seed the editor with current generated body before inserting.
+        if (!bodyInput.value) bodyInput.value = generatedBody();
+        bodyDirty = true;
+        if (bodyEditorToggle) bodyEditorToggle.classList.add("dirty");
+      }
+      insertAtCursor(bodyInput, snippets.join("\n\n"));
+      bodyInput.dispatchEvent(new Event("input", { bubbles: true }));
+      bodyInput.focus();
+    }
+    if (count) {
+      showBodyEditorHint(`Inserted ${count} image${count === 1 ? "" : "s"}${skipped ? ` (skipped ${skipped})` : ""}.`, "ok");
+    } else if (skipped) {
+      showBodyEditorHint(`Skipped ${skipped} non-image or oversized file${skipped === 1 ? "" : "s"} (max 5 MB).`, "err");
+    }
+    return count;
+  }
+  bodyEditorToggle?.addEventListener("click", () => {
+    setBodyEditorOpen(!bodyEditorOpen);
+    if (bodyEditorOpen) bodyInput?.focus();
+    refreshPreviewIfOpen();
+  });
+  bodyResetBtn?.addEventListener("click", () => {
+    if (!bodyInput) return;
+    bodyDirty = false;
+    bodyInput.value = generatedBody();
+    if (bodyEditorToggle) bodyEditorToggle.classList.remove("dirty");
+    showBodyEditorHint("Reset to generated body.", "ok");
+    refreshPreviewIfOpen();
+  });
+  bodyAttachBtn?.addEventListener("click", () => { bodyFileInput?.click(); });
+  bodyFileInput?.addEventListener("change", async () => {
+    const files = Array.from(bodyFileInput.files || []);
+    bodyFileInput.value = "";
+    if (!files.length) return;
+    await embedImages(files);
+    refreshPreviewIfOpen();
+  });
+  bodyInput?.addEventListener("input", () => {
+    bodyDirty = (bodyInput.value || "") !== generatedBody();
+    if (bodyEditorToggle) bodyEditorToggle.classList.toggle("dirty", bodyDirty);
+    refreshPreviewIfOpen();
+  });
+  bodyInput?.addEventListener("paste", async (e) => {
+    const cd = e.clipboardData;
+    if (!cd) return;
+    const files = [];
+    for (const item of cd.items || []) {
+      if (item.kind === "file") {
+        const f = item.getAsFile();
+        if (f && /^image\//i.test(f.type || "")) files.push(f);
+      }
+    }
+    if (files.length === 0) return;
+    e.preventDefault();
+    await embedImages(files);
+    refreshPreviewIfOpen();
+  });
+  function onBodyDragOver(e) {
+    if (!e.dataTransfer) return;
+    const types = Array.from(e.dataTransfer.types || []);
+    if (!types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    bodyEditorBox?.classList.add("is-dragover");
+  }
+  function onBodyDragLeave() { bodyEditorBox?.classList.remove("is-dragover"); }
+  async function onBodyDrop(e) {
+    if (!e.dataTransfer) return;
+    const files = Array.from(e.dataTransfer.files || []).filter((f) => /^image\//i.test(f.type || ""));
+    if (files.length === 0) return;
+    e.preventDefault();
+    bodyEditorBox?.classList.remove("is-dragover");
+    await embedImages(files);
+    refreshPreviewIfOpen();
+  }
+  bodyInput?.addEventListener("dragover", onBodyDragOver);
+  bodyEditorBox?.addEventListener("dragover", onBodyDragOver);
+  bodyEditorBox?.addEventListener("dragleave", onBodyDragLeave);
+  bodyInput?.addEventListener("drop", onBodyDrop);
+  bodyEditorBox?.addEventListener("drop", onBodyDrop);
 
   submitBtn.title = "Create a GitHub issue with the captured quote";
 

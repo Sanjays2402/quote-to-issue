@@ -2493,3 +2493,59 @@ body[data-theme="light"] .palette-backdrop { background: rgba(245, 245, 250, 0.5
 }
 .palette-foot-hint { display: inline-flex; align-items: center; gap: 4px; }
 .palette-foot-count { margin-left: auto; }
+
+/* --- Inline body editor (paste/drop images) ----------------------------- */
+.body-editor {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border-soft, rgba(255,255,255,0.08));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: border-color 180ms cubic-bezier(0.16,1,0.3,1), box-shadow 180ms cubic-bezier(0.16,1,0.3,1);
+}
+body[data-theme="light"] .body-editor { background: rgba(0,0,0,0.03); }
+.body-editor.is-dragover {
+  border-color: var(--accent-ring, rgba(120,160,255,0.6));
+  box-shadow: 0 0 0 2px var(--accent-ring, rgba(120,160,255,0.4));
+}
+.body-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.body-editor-actions { display: inline-flex; gap: 6px; }
+.body-input {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border-soft, rgba(255,255,255,0.08));
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: inherit;
+}
+body[data-theme="light"] .body-input { background: rgba(0,0,0,0.04); }
+.body-input:focus { outline: none; border-color: var(--accent-ring); box-shadow: 0 0 0 2px var(--accent-ring); }
+.body-editor-hint { margin: 0; font-size: 11px; opacity: 0.7; }
+.body-editor-hint[data-kind="ok"] { color: var(--success, #6ee7b7); opacity: 1; }
+.body-editor-hint[data-kind="err"] { color: var(--danger, #fca5a5); opacity: 1; }
+.head-actions { display: inline-flex; gap: 6px; align-items: center; }
+.chip-toggle.dirty { color: var(--accent, #93c5fd); }
+.md-img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft, rgba(255,255,255,0.08));
+  margin: 6px 0;
+  display: block;
+}

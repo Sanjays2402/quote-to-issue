@@ -122,13 +122,22 @@
           </svg>
           <span class="meta-label">New issue</span>
         </div>
-        <button class="chip-toggle" data-action="toggle-preview" type="button" aria-pressed="false" title="Toggle preview">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path>
-            <circle cx="12" cy="12" r="3"></circle>
-          </svg>
-          <span>Preview</span>
-        </button>
+        <div class="head-actions">
+          <button class="chip-toggle" data-action="toggle-body-editor" type="button" aria-pressed="false" title="Edit issue body and paste/drop images inline">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 20h9"></path>
+              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"></path>
+            </svg>
+            <span>Edit body</span>
+          </button>
+          <button class="chip-toggle" data-action="toggle-preview" type="button" aria-pressed="false" title="Toggle preview">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+            <span>Preview</span>
+          </button>
+        </div>
       </header>
 
       <div class="field">
@@ -355,6 +364,32 @@
         </header>
         <div class="preview-rendered markdown" data-field="preview-rendered" aria-live="polite"></div>
         <pre class="preview-body" data-field="preview-body" hidden></pre>
+      </div>
+
+      <div class="body-editor field" data-body-editor hidden>
+        <header class="body-editor-head">
+          <span class="context-label">Issue body</span>
+          <div class="body-editor-actions">
+            <button class="btn ghost btn-sm" type="button" data-action="attach-image" title="Attach image from file">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                <path d="M3 16l5-5 4 4 3-3 6 6"></path>
+                <circle cx="9" cy="9" r="1.5"></circle>
+              </svg>
+              <span>Attach</span>
+            </button>
+            <button class="btn ghost btn-sm" type="button" data-action="reset-body" title="Reset to generated body">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 12a9 9 0 1 0 3-6.7"></path>
+                <path d="M3 4v5h5"></path>
+              </svg>
+              <span>Reset</span>
+            </button>
+          </div>
+        </header>
+        <textarea class="input body-input" data-field="body" rows="10" spellcheck="false" placeholder="Issue body. Paste or drop images to embed them inline."></textarea>
+        <input class="sr-only" type="file" accept="image/*" multiple data-field="body-file" hidden>
+        <p class="field-hint body-editor-hint" data-field="body-editor-hint">Paste or drop images to embed them inline as Markdown.</p>
       </div>
 
       <p class="draft-status" data-field="draft-status" hidden></p>
