@@ -773,6 +773,40 @@ function detectTaskListLines(text) {
   return nonEmpty.map((ln) => "- [ ] " + ln.replace(BULLET_LINE_RE, "").trim()).filter((ln) => ln.length > 6);
 }
 
+// Detect tabular selections (copied spreadsheet/console output) and render them
+// as GitHub-flavored markdown tables. Triggers when every non-empty line
+// splits into the same number of cells (>= 2) on one of: tab, pipe, comma.
+// Pipe cells may be wrapped in leading/trailing pipes.
+function detectTableRows(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length < 2 || lines.length > 500) return null;
+  for (const sep of ["\t", "|", ","]) {
+    const rows = lines.map((l) => {
+      let line = l;
+      if (sep === "|") line = line.replace(/^\||\|$/g, "");
+      return line.split(sep).map((c) => c.trim());
+    });
+    const cols = rows[0].length;
+    if (cols >= 2 && cols <= 12 &&
+        rows.every((r) => r.length === cols && r.every((c) => c.length > 0))) {
+      return rows;
+    }
+  }
+  return null;
+}
+
+function renderTableMarkdown(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return "";
+  const esc = (c) => String(c).replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+  const header = "| " + rows[0].map(esc).join(" | ") + " |";
+  const divider = "|" + rows[0].map(() => "---").join("|") + "|";
+  const body = rows.slice(1).map((r) => "| " + r.map(esc).join(" | ") + " |");
+  return [header, divider, ...body].join("\n");
+}
+
 function buildMarkdownBody(q) {
   if (!q) return "";
   const lines = [];
@@ -781,11 +815,16 @@ function buildMarkdownBody(q) {
     lines.push(buildCodeFence(q));
     lines.push("");
   } else if (quoted) {
-    const tasks = (q.taskListEnabled === false) ? null : detectTaskListLines(quoted);
-    if (tasks && tasks.length >= 2) {
-      for (const t of tasks) lines.push(t);
+    const table = (q.tableEnabled === false) ? null : detectTableRows(quoted);
+    if (table) {
+      lines.push(renderTableMarkdown(table));
     } else {
-      for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+      const tasks = (q.taskListEnabled === false) ? null : detectTaskListLines(quoted);
+      if (tasks && tasks.length >= 2) {
+        for (const t of tasks) lines.push(t);
+      } else {
+        for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+      }
     }
     lines.push("");
   }
@@ -1154,11 +1193,14 @@ function renderTemplate(tmpl, q) {
   const quoteCode = q?.isCode ? buildCodeFence(q) : (quoted ? "```\n" + quoted + "\n```" : "");
   const taskLines = detectTaskListLines(quoted);
   const quoteTaskList = (taskLines && taskLines.length >= 2) ? taskLines.join("\n") : "";
+  const tableRows = detectTableRows(quoted);
+  const quoteTable = tableRows ? renderTableMarkdown(tableRows) : "";
   const vars = {
     quote: quoted,
     quote_blockquote: quoteBlock,
     quote_code: quoteCode,
     quote_tasklist: quoteTaskList,
+    quote_table: quoteTable,
     code_language: q?.codeLanguage || "",
     source_title: sourceTitle,
     source_url: sourceUrl,
@@ -1912,6 +1954,7 @@ async function setRepoIssueType(repo, type) {
 if (typeof globalThis !== "undefined") {
   globalThis.__qti = {
     parseRepo, parseLabels, parseAssignees, parseIssueOrPrUrl, deriveTitle, firstSentence, smartTruncate, buildMarkdownBody, buildCodeFence, detectTaskListLines, BULLET_LINE_RE, buildSourceUrlWithAnchor, deriveScreenshotFilename,
+    detectTableRows, renderTableMarkdown,
     formatBytes, formatPublishDate, normalizeRecentRepos, filterRecentRepos, fuzzyMatch,
     normalizeRepoTemplates, renderTemplate, DEFAULT_TEMPLATE, MAX_TEMPLATE_LEN,
     normalizeRepoDefaults, sanitizeTitlePrefix, applyTitlePrefix, MAX_TITLE_PREFIX_LEN,

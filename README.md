@@ -2,7 +2,18 @@
 
 Select text on any page → file a GitHub issue with source URL, screenshot, and surrounding context.
 
-> Status: **v0.1.0 — scaffold**. Features ship every 15 minutes via an autonomous agent. See `ROADMAP.md` for what's next.
+## Features
+
+- Context menu on any selection, plus `Alt+Shift+Q` / `Alt+Shift+B` shortcuts
+- Smart rendering of selections: code blocks, task lists, and **tabular data
+  as GitHub-flavored markdown tables** (detects tab-, pipe-, and comma-separated
+  rows)
+- Issue body templates with variables (`{{quote}}`, `{{quote_table}}`,
+  `{{quote_tasklist}}`, `{{quote_code}}`, …)
+- Per-repo defaults: labels, assignees, title prefix, issue type, templates
+- Screenshot capture (visible tab, highlighted-selection, annotated)
+- Drafts, bulk-filing from multiple selections, offline queue with retry
+- Duplicate-issue detector, smart label inference, quote history search and pinning
 
 ## Install (dev)
 

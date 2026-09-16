@@ -1285,3 +1285,55 @@ for (const needle of ["sanitizeTitlePrefix", "applyTitlePrefix", "d.titlePrefix"
   if (!popupJsPx.includes(needle)) { console.error("popup.js missing prefix token:", needle); process.exit(1); }
 }
 console.log("\u2713 title-prefix smoke ok");
+
+// --- Markdown table builder -------------------------------------------------
+const { detectTableRows, renderTableMarkdown } = globalThis.__qti;
+if (typeof detectTableRows !== "function" || typeof renderTableMarkdown !== "function") {
+  console.error("table builder helpers not exported on globalThis.__qti");
+  process.exit(1);
+}
+// Tab-separated.
+const tabRows = detectTableRows("Name\tAge\nAda\t36\nGrace\t85");
+if (!tabRows || tabRows.length !== 3 || tabRows[0].join(",") !== "Name,Age") {
+  console.error("tab table detection bad:", tabRows);
+  process.exit(1);
+}
+// Pipe-separated with outer pipes.
+const pipeRows = detectTableRows("| a | b |\n| 1 | 2 |\n| 3 | 4 |");
+if (!pipeRows || pipeRows[0].join(",") !== "a,b" || pipeRows[2].join(",") !== "3,4") {
+  console.error("pipe table detection bad:", pipeRows);
+  process.exit(1);
+}
+// CSV.
+const csvRows = detectTableRows("x,y\n1,2\n3,4");
+if (!csvRows || csvRows.length !== 3) { console.error("csv table detection bad:", csvRows); process.exit(1); }
+// Negative cases: prose, ragged rows, single line, one column.
+if (detectTableRows("hello world")) { console.error("prose flagged as table"); process.exit(1); }
+if (detectTableRows("a,b\nc")) { console.error("ragged rows flagged as table"); process.exit(1); }
+if (detectTableRows("one\ntwo\nthree")) { console.error("single-col flagged as table"); process.exit(1); }
+// Render.
+const tbl = renderTableMarkdown([["Name", "Age"], ["Ada", "36"]]);
+const want = "| Name | Age |\n|---|---|\n| Ada | 36 |";
+if (tbl !== want) { console.error("table render bad:", JSON.stringify(tbl)); process.exit(1); }
+// Pipe escaping in cells.
+const esc = renderTableMarkdown([["a", "b"], ["x|y", "z"]]);
+if (!esc.includes("x\\|y")) { console.error("table pipe escape bad:", esc); process.exit(1); }
+// Body integration: tabular selection renders a table, not a blockquote.
+const bodyTbl = buildMarkdownBody({
+  selectionText: "Name\tAge\nAda\t36",
+  pageUrl: "https://e.com", capturedAt: "2026-05-23T10:00:00Z",
+});
+if (!bodyTbl.includes("| Name | Age |")) { console.error("body table missing:", bodyTbl); process.exit(1); }
+if (bodyTbl.includes("> Name")) { console.error("body should NOT blockquote tables"); process.exit(1); }
+// Plain prose still blockquotes.
+const bodyProse = buildMarkdownBody({ selectionText: "just prose", pageUrl: "https://e.com", capturedAt: "2026-05-23T10:00:00Z" });
+if (!bodyProse.includes("> just prose")) { console.error("non-table should still blockquote"); process.exit(1); }
+// Template variable {{quote_table}}.
+const rendTbl = renderTemplate("T={{quote_table}}", { selectionText: "a\tb\n1\t2" });
+if (!rendTbl.includes("| a | b |")) { console.error("renderTemplate quote_table bad:", rendTbl); process.exit(1); }
+// Background must declare matching detection tokens.
+const swTbl = fs.readFileSync("src/background.js", "utf8");
+for (const needle of ["__qtiDetectTableRows", "__qtiTableToMarkdown", "quote_table", "tableEnabled"]) {
+  if (!swTbl.includes(needle)) { console.error("background.js missing table token:", needle); process.exit(1); }
+}
+console.log("\u2713 table-builder smoke ok");

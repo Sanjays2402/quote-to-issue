@@ -175,6 +175,41 @@ function __qtiDetectTaskListLines(text) {
   return out.length >= 2 ? out : null;
 }
 
+// Detect tabular selections (copied spreadsheet/console output) and render them
+// as GitHub-flavored markdown tables. Triggers when every non-empty line
+// splits into the same number of cells (>= 2) on one of: tab, pipe, comma.
+// Pipe cells may be wrapped in leading/trailing pipes. Mirrors popup.js's
+// detectTableRows/renderTableMarkdown for shortcut-filed issues.
+function __qtiDetectTableRows(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length < 2 || lines.length > 500) return null;
+  for (const sep of ["\t", "|", ","]) {
+    const rows = lines.map((l) => {
+      let line = l;
+      if (sep === "|") line = line.replace(/^\||\|$/g, "");
+      return line.split(sep).map((c) => c.trim());
+    });
+    const cols = rows[0].length;
+    if (cols >= 2 && cols <= 12 &&
+        rows.every((r) => r.length === cols && r.every((c) => c.length > 0))) {
+      return rows;
+    }
+  }
+  return null;
+}
+
+function __qtiTableToMarkdown(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) return "";
+  const esc = (c) => String(c).replace(/\|/g, "\\|").replace(/\s+/g, " ").trim();
+  const header = "| " + rows[0].map(esc).join(" | ") + " |";
+  const divider = "|" + rows[0].map(() => "---").join("|") + "|";
+  const body = rows.slice(1).map((r) => "| " + r.map(esc).join(" | ") + " |");
+  return [header, divider, ...body].join("\n");
+}
+
 function __qtiBuildMarkdownBody(q) {
   if (!q) return "";
   const lines = [];
@@ -183,11 +218,16 @@ function __qtiBuildMarkdownBody(q) {
     lines.push(__qtiBuildCodeFence(q));
     lines.push("");
   } else if (quoted) {
-    const tasks = (q.taskListEnabled === false) ? null : __qtiDetectTaskListLines(quoted);
-    if (tasks) {
-      for (const t of tasks) lines.push(t);
+    const table = (q.tableEnabled === false) ? null : __qtiDetectTableRows(quoted);
+    if (table) {
+      lines.push(__qtiTableToMarkdown(table));
     } else {
-      for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+      const tasks = (q.taskListEnabled === false) ? null : __qtiDetectTaskListLines(quoted);
+      if (tasks) {
+        for (const t of tasks) lines.push(t);
+      } else {
+        for (const ln of quoted.split(/\r?\n/)) lines.push("> " + ln);
+      }
     }
     lines.push("");
   }
@@ -238,11 +278,14 @@ function __qtiRenderTemplate(tpl, q) {
   const quoteCode = (q && q.isCode) ? __qtiBuildCodeFence(q) : (quoted ? "```\n" + quoted + "\n```" : "");
   const taskLines = __qtiDetectTaskListLines(quoted);
   const quoteTaskList = taskLines ? taskLines.join("\n") : "";
+  const tableRows = __qtiDetectTableRows(quoted);
+  const quoteTable = tableRows ? __qtiTableToMarkdown(tableRows) : "";
   const repls = {
     quote: quoted,
     quote_blockquote: quoteBlock,
     quote_code: quoteCode,
     quote_tasklist: quoteTaskList,
+    quote_table: quoteTable,
     code_language: String(q?.codeLanguage || ""),
     source_title: String(q?.pageTitle || ""),
     source_url: String(q?.pageUrl || ""),
